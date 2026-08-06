@@ -1,0 +1,720 @@
+// connect.lux — Connect Four against a bot that looks ahead.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run connect.lux
+//
+// Drop a piece into a column, four in a row wins, and the whole game is that.
+// What is worth watching is the bot.
+//
+// It has no book of openings and no rules about what a good move looks like. It
+// plays the game out in its head: every column it could drop into, every column
+// you could answer with, every column it could answer that with, and so on down
+// to whatever depth it has been given. At the bottom of all that it scores the
+// position, and then it walks the answers back up on the assumption that you
+// will always pick the one worst for it. That assumption is the whole idea, and
+// it is why the bot never hopes: it will not set a trap that only works if you
+// miss it.
+//
+// Difficulty is not a different bot. It is the same search told to stop sooner.
+// The easy one looks two moves ahead, which is enough to take a win it is handed
+// and to block the one you are about to make, and not enough to see the trap
+// being built underneath it three moves out. The hard one looks five ahead.
+// Every difference you feel between them comes from that one number, exactly as
+// the bot in poker.lux is made weak by giving it fewer trials rather than worse
+// rules — a weak opponent should be one that cannot see far, not one that has
+// been told to play badly.
+//
+// Two, four and five, and those three numbers were measured rather than chosen,
+// because the obvious assumption turns out to be false. Looking further ahead
+// does not reliably make this bot better. Played against each other three
+// hundred games at a time, depth five beats depth four comfortably and depth two
+// every single game — but depth six loses to both of them, and depth three loses
+// to depth two almost every game it plays.
+//
+// That is not a bug in the search; the pruning was checked against an unpruned
+// one over two thousand positions and they agree exactly. It is the guess at the
+// bottom. The evaluation counts threats, and a threat that has not been answered
+// yet counts the same as one that cannot be, so a position judged just after the
+// bot moves looks better than the very same position judged one move later, once
+// the reply is on the board. Searches that stop on different sides of that are
+// not measuring the same thing, and adding a level can hand the bot a more
+// confident view of a position it understands no better. It is called the
+// odd-even effect and every engine with a rough evaluator has some of it.
+//
+// The honest fix is a better guess at the bottom rather than a deeper search
+// above it — which is worth knowing, because "just look further ahead" is the
+// first thing anybody reaches for and it is not always an improvement.
+//
+// The searching is helped along by two things worth naming, because they are
+// the difference between a bot that answers and one you wait for.
+//
+// The first is that once a line is known to be worse than one already found,
+// there is no reason to keep reading it. If I can make a move that leaves you
+// at worst even, and the first answer you have to my next idea already leaves
+// me behind, that idea is dead — how much worse your other answers might be
+// cannot save it. Cutting there is called alpha-beta, and on a good day it lets
+// the same depth be reached for the square root of the work.
+//
+// The second is that cutting only pays if the good moves are looked at first,
+// so the columns are tried from the middle outward. The centre column sits in
+// more of the sixty-nine possible fours than any other square on the board, so
+// it is the best guess at a good move before any thinking has been done, and a
+// good guess first makes everything after it cheaper.
+//
+// If the bot is slower than you would like: `lux build connect.lux` and run the
+// binary instead. The searching is identical and about a thousand times faster,
+// which is the one place in this folder where compiling changes what the program
+// feels like rather than just how long it takes to finish.
+
+// ---------- the generator, from random.lux ----------
+
+// Only used to break ties. Two moves the search cannot separate should not
+// always come out the same way, or every game against the same bot is the same
+// game.
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same game every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- the board ----------
+
+// Seven columns, six rows, and one flat array rather than a grid of grids: the
+// search copies the board at every node it looks at, and forty-two numbers in a
+// row are cheaper to copy than seven arrays holding six each.
+//
+// Row 0 is the bottom, because that is the end pieces land on.
+
+func columns() -> int {
+    return 7
+}
+
+func rows() -> int {
+    return 6
+}
+
+func emptyBoard() -> [int] {
+    var board: [int]
+    for cell in 0..columns() * rows() {
+        board += 0
+    }
+    return board
+}
+
+func cellAt(board: [int], col: int, row: int) -> int {
+    return board[col * rows() + row]
+}
+
+// How full a column is, which is also the row the next piece lands on. Written
+// against the array directly rather than through cellAt: the search asks this
+// seven times at every node it looks at, and a helper call inside a loop inside
+// a loop is a cost you only notice when it is multiplied by a hundred thousand.
+func heightOf(board: [int], col: int) -> int {
+    let high = rows()
+    let base = col * high
+    var filled = 0
+    for row in 0..high {
+        if board[base + row] != 0 {
+            filled = row + 1
+        }
+    }
+    return filled
+}
+
+func hasRoom(board: [int], col: int) -> bool {
+    return heightOf(board, col) < rows()
+}
+
+func isFull(board: [int]) -> bool {
+    var full = true
+    for col in 0..columns() {
+        if hasRoom(board, col) {
+            full = false
+        }
+    }
+    return full
+}
+
+// A piece dropped returns a new board rather than changing this one. That is
+// what makes the search simple: there is nothing to undo on the way back up,
+// because nothing was ever done.
+//
+// The row is handed in rather than worked out again. The search already knows
+// it — it has to, to ask whether the column has room — and counting the same
+// column twice at every one of tens of thousands of nodes is the sort of waste
+// that is invisible in the code and very visible in the waiting.
+func placed(board: [int], col: int, row: int, who: int) -> [int] {
+    var after = board
+    after[col * rows() + row] = who
+    return after
+}
+
+func dropped(board: [int], col: int, who: int) -> [int] {
+    return placed(board, col, heightOf(board, col), who)
+}
+
+func other(who: int) -> int {
+    if who == 1 {
+        return 2
+    }
+    return 1
+}
+
+// ---------- has somebody won ----------
+
+// Only the square just played can be part of a new four, so nothing else needs
+// looking at. Count how far the same colour runs in one direction, count the
+// other way, add the piece in the middle.
+func runFrom(board: [int], col: int, row: int, dc: int, dr: int, who: int) -> int {
+    let wide = columns()
+    let high = rows()
+    var count = 0
+    var c = col + dc
+    var r = row + dr
+    var going = true
+    while going {
+        if c >= 0 && c < wide && r >= 0 && r < high && board[c * high + r] == who {
+            count += 1
+            c += dc
+            r += dr
+        } else {
+            going = false
+        }
+    }
+    return count
+}
+
+func fourAlong(board: [int], col: int, row: int, dc: int, dr: int, who: int) -> bool {
+    return 1 + runFrom(board, col, row, dc, dr, who)
+             + runFrom(board, col, row, -dc, -dr, who) >= 4
+}
+
+func wins(board: [int], col: int, row: int, who: int) -> bool {
+    return fourAlong(board, col, row, 1, 0, who)
+        || fourAlong(board, col, row, 0, 1, who)
+        || fourAlong(board, col, row, 1, 1, who)
+        || fourAlong(board, col, row, 1, -1, who)
+}
+
+// ---------- what a position is worth ----------
+//
+// At the bottom of the search the game is usually unfinished, and something has
+// to be said about it anyway. Every run of four squares on the board is looked
+// at: three of yours and a gap is nearly a win, two and two gaps is a start, and
+// a run holding both colours is worth nothing to anybody because neither can
+// ever finish it.
+//
+// This is a guess, and it is the only guess in the program. Everything above it
+// is exact — it is only the horizon that has to be estimated, which is why
+// looking further ahead makes the bot better: it pushes the guessing further
+// away from the move being made.
+
+func windowValue(mine: int, yours: int) -> int {
+    if mine > 0 && yours > 0 {
+        return 0
+    }
+    if mine == 3 {
+        return 50
+    }
+    if mine == 2 {
+        return 10
+    }
+    if mine == 1 {
+        return 1
+    }
+    if yours == 3 {
+        return -50
+    }
+    if yours == 2 {
+        return -10
+    }
+    if yours == 1 {
+        return -1
+    }
+    return 0
+}
+
+// Four squares in a line, given where the line starts and how far apart its
+// squares are in the array. Because the board is flat, every direction is just
+// a gap: one step up a column is 1, one step across is a whole column, and the
+// two diagonals are one either side of that. Walking a line is then addition,
+// with no coordinates to convert and no bounds to re-check — the caller has
+// already established that all four squares exist.
+func lineValue(board: [int], start: int, gap: int, me: int) -> int {
+    var mine = 0
+    var yours = 0
+    var at = start
+    for step in 0..4 {
+        let held = board[at]
+        if held == me {
+            mine += 1
+        } else if held != 0 {
+            yours += 1
+        }
+        at += gap
+    }
+    return windowValue(mine, yours)
+}
+
+func judge(board: [int], me: int) -> int {
+    let high = rows()
+    let wide = columns()
+    let middle = wide / 2
+    var score = 0
+    for col in 0..wide {
+        let base = col * high
+        for row in 0..high {
+            let at = base + row
+            if col + 3 < wide {
+                score += lineValue(board, at, high, me)
+            }
+            if row + 3 < high {
+                score += lineValue(board, at, 1, me)
+            }
+            if col + 3 < wide && row + 3 < high {
+                score += lineValue(board, at, high + 1, me)
+            }
+            if col + 3 < wide && row >= 3 {
+                score += lineValue(board, at, high - 1, me)
+            }
+        }
+        // The middle column is in more fours than any other, so a piece there
+        // is worth something before anything has been built on it.
+        if col == middle {
+            for row in 0..high {
+                if board[base + row] == me {
+                    score += 3
+                }
+            }
+        }
+    }
+    return score
+}
+
+// ---------- the search ----------
+
+// Middle first, edges last. The order does not change what the search decides —
+// it changes how much of the tree it has to read before it is sure.
+func columnOrder(slot: int) -> int {
+    return match slot {
+        0 => 3
+        1 => 2
+        2 => 4
+        3 => 1
+        4 => 5
+        5 => 0
+        _ => 6
+    }
+}
+
+// A win is worth more than any arrangement of pieces can be, and a win now is
+// worth more than the same win three moves later — otherwise the bot, seeing
+// that it wins either way, has no reason to get on with it.
+func winValue(depth: int) -> int {
+    return 100000 + depth
+}
+
+// The position through the eyes of `me`, with `toMove` about to play, reading
+// `depth` moves further. Nobody has won yet when this is called; the caller
+// checks that as it makes each move, because the move it just made is the only
+// place a win could have appeared.
+//
+// alpha is the best `me` is already assured of somewhere else, beta the best the
+// opponent is assured of. The moment those cross, this line cannot affect
+// anything and the rest of it goes unread.
+func search(board: [int], toMove: int, me: int, depth: int, alpha: int, beta: int, filled: int) -> int {
+    if depth == 0 {
+        return judge(board, me)
+    }
+    if filled == columns() * rows() {
+        return 0
+    }
+
+    var a = alpha
+    var b = beta
+    var cut = false
+    var best = 0
+    var started = false
+
+    for slot in 0..columns() {
+        let col = columnOrder(slot)
+        let row = heightOf(board, col)
+        if !cut && row < rows() {
+            let value = valueAfter(placed(board, col, row, toMove), col, row, toMove, me, depth, a, b, filled)
+
+            if !started {
+                best = value
+                started = true
+            } else if toMove == me && value > best {
+                best = value
+            } else if toMove != me && value < best {
+                best = value
+            }
+
+            if toMove == me {
+                if best > a {
+                    a = best
+                }
+            } else {
+                if best < b {
+                    b = best
+                }
+            }
+            if a >= b {
+                // Whatever else is down here, it cannot change the answer
+                // above. lux has no `break`, so the flag does the same job.
+                cut = true
+            }
+        }
+    }
+
+    if !started {
+        return 0
+    }
+    return best
+}
+
+// What one move leads to. A move that wins ends the line there and then; a move
+// that does not hands the position over and asks the same question of the other
+// player, one level shallower. This and search call each other all the way down,
+// and the pair of them is the whole engine.
+func valueAfter(after: [int], col: int, row: int, toMove: int, me: int, depth: int, alpha: int, beta: int, filled: int) -> int {
+    if wins(after, col, row, toMove) {
+        if toMove == me {
+            return winValue(depth)
+        }
+        return -winValue(depth)
+    }
+    return search(after, other(toMove), me, depth - 1, alpha, beta, filled + 1)
+}
+
+// One move's worth, from the point of view of the player about to make it.
+func valueOfMove(board: [int], col: int, who: int, depth: int) -> int {
+    let row = heightOf(board, col)
+    let after = placed(board, col, row, who)
+    if wins(after, col, row, who) {
+        return winValue(depth)
+    }
+    return search(after, other(who), who, depth - 1, -1000000, 1000000, countPlaced(board) + 1)
+}
+
+func countPlaced(board: [int]) -> int {
+    var count = 0
+    for cell in board {
+        if cell != 0 {
+            count += 1
+        }
+    }
+    return count
+}
+
+struct Choice {
+    col: int
+    rng: Random
+}
+
+// Among moves the search cannot tell apart, pick one at random — reservoir
+// style, so it does not need to collect them first: the nth equal move takes
+// the place with probability one in n, which leaves every one of them equally
+// likely by the end.
+func bestMove(board: [int], who: int, depth: int, r: Random) -> Choice {
+    var rng = r
+    var chosen = -1
+    var bestValue = 0
+    var ties = 0
+    for slot in 0..columns() {
+        let col = columnOrder(slot)
+        if hasRoom(board, col) {
+            let value = valueOfMove(board, col, who, depth)
+            if chosen < 0 || value > bestValue {
+                chosen = col
+                bestValue = value
+                ties = 1
+            } else if value == bestValue {
+                ties += 1
+                rng = next(rng)
+                if below(rng, ties) == 0 {
+                    chosen = col
+                }
+            }
+        }
+    }
+    return Choice(col: chosen, rng: rng)
+}
+
+// ---------- showing it ----------
+
+func pieceLabel(held: int) -> string {
+    return match held {
+        1 => "X"
+        2 => "O"
+        _ => "."
+    }
+}
+
+func show(board: [int]) {
+    print("")
+    for step in 0..rows() {
+        let row = rows() - 1 - step
+        var line = "   "
+        for col in 0..columns() {
+            line += pieceLabel(cellAt(board, col, row)) + " "
+        }
+        print(line)
+    }
+    print("   1 2 3 4 5 6 7")
+    print("")
+}
+
+// ---------- who you are playing ----------
+
+struct Level {
+    name: string
+    habit: string
+    depth: int
+}
+
+func easyLevel() -> Level {
+    return Level(
+        name: "easy",
+        habit: "It looks two moves ahead: it will take a win and block yours, and it will not see anything you are building.",
+        depth: 2)
+}
+
+func regularLevel() -> Level {
+    return Level(
+        name: "regular",
+        habit: "It looks four moves ahead, which is far enough to notice a threat while you are still setting it up.",
+        depth: 4)
+}
+
+func hardLevel() -> Level {
+    return Level(
+        name: "hard",
+        habit: "It looks five moves ahead. Beating this one takes a threat it cannot answer in one move.",
+        depth: 5)
+}
+
+func levelMenu() {
+    print("How far should the bot look ahead?")
+    print("  e — easy: two moves")
+    print("  r — regular: four moves")
+    print("  h — hard: five moves, and a little slower")
+}
+
+func chooseLevel() -> Level {
+    levelMenu()
+    var picked = regularLevel()
+    var chosen = false
+    while !chosen {
+        let typed = replace(replace(input("  e/r/h: "), " ", ""), "\n", "")
+        if typed == "e" || typed == "E" || typed == "easy" {
+            picked = easyLevel()
+            chosen = true
+        } else if typed == "r" || typed == "R" || typed == "regular" || typed == "" {
+            picked = regularLevel()
+            chosen = true
+        } else if typed == "h" || typed == "H" || typed == "hard" {
+            picked = hardLevel()
+            chosen = true
+        } else {
+            print("  One of e, r, or h.")
+        }
+    }
+    return picked
+}
+
+// ---------- the hint ----------
+
+// The same search, run on your behalf and read out. Not a different, kinder
+// engine — the number beside each column is exactly what the bot would think of
+// that move if it were yours, which is the only honest kind of hint.
+func hintWord(value: int) -> string {
+    if value > 50000 {
+        return "wins"
+    }
+    if value < -50000 {
+        return "loses"
+    }
+    if value >= 40 {
+        return "strong"
+    }
+    if value >= 10 {
+        return "fair"
+    }
+    if value >= -10 {
+        return "even"
+    }
+    if value >= -40 {
+        return "poor"
+    }
+    return "bad"
+}
+
+func showHints(board: [int], depth: int) {
+    print("  What each column is worth to you, read the same way the bot reads it:")
+    for col in 0..columns() {
+        if hasRoom(board, col) {
+            let value = valueOfMove(board, col, 1, depth)
+            print("    column " + string(col + 1) + ": " + hintWord(value)
+                + " (" + string(value) + ")")
+        } else {
+            print("    column " + string(col + 1) + ": full")
+        }
+    }
+}
+
+// ---------- reading what you typed ----------
+
+// Comes back as a column from 0 to 6, or -1 for quit, -2 for a hint, -3 for
+// nonsense. A column that is full is nonsense too, and says so.
+func columnTyped(typed: string, board: [int]) -> int {
+    let plain = replace(replace(typed, " ", ""), "\n", "")
+    if plain == "" || plain == "q" || plain == "Q" {
+        return -1
+    }
+    if plain == "?" {
+        return -2
+    }
+    return match parseInt(plain) {
+        some(let n) => columnIfOpen(n, board)
+        none        => -3
+    }
+}
+
+func columnIfOpen(n: int, board: [int]) -> int {
+    if n < 1 || n > columns() {
+        return -3
+    }
+    if !hasRoom(board, n - 1) {
+        return -4
+    }
+    return n - 1
+}
+
+// ---------- the game ----------
+
+print("Connect Four. You are X, the bot is O, and four in a row wins.")
+print("Type a column from 1 to 7, ? for what each one is worth, q to leave.")
+print("")
+
+let level = chooseLevel()
+print("")
+print("Playing the " + level.name + " bot. " + level.habit)
+
+var rng = fromClock()
+var playing = true
+var youStart = true
+var yourWins = 0
+var botWins = 0
+var draws = 0
+var gamesPlayed = 0
+
+while playing {
+    var board = emptyBoard()
+    var yourTurn = youStart
+    var finished = false
+    gamesPlayed += 1
+
+    print("")
+    print("── game " + string(gamesPlayed) + " ─────────────────────────")
+    if youStart {
+        print("You go first.")
+    } else {
+        print("The bot goes first.")
+    }
+    show(board)
+
+    while !finished && playing {
+        if yourTurn {
+            var moved = false
+            while !moved && playing {
+                let asked = columnTyped(input("  your column: "), board)
+                if asked == -1 {
+                    playing = false
+                } else if asked == -2 {
+                    showHints(board, level.depth)
+                } else if asked == -3 {
+                    print("  A column from 1 to 7, or ? for a hint.")
+                } else if asked == -4 {
+                    print("  That column is full.")
+                } else {
+                    let row = heightOf(board, asked)
+                    board = dropped(board, asked, 1)
+                    moved = true
+                    show(board)
+                    if wins(board, asked, row, 1) {
+                        print("  Four in a row. You win.")
+                        yourWins += 1
+                        finished = true
+                    } else if isFull(board) {
+                        print("  The board is full. A draw.")
+                        draws += 1
+                        finished = true
+                    }
+                }
+            }
+        } else {
+            let picked = bestMove(board, 2, level.depth, rng)
+            rng = picked.rng
+            let row = heightOf(board, picked.col)
+            board = dropped(board, picked.col, 2)
+            print("  The bot plays column " + string(picked.col + 1) + ".")
+            show(board)
+            if wins(board, picked.col, row, 2) {
+                print("  Four in a row. The bot wins.")
+                botWins += 1
+                finished = true
+            } else if isFull(board) {
+                print("  The board is full. A draw.")
+                draws += 1
+                finished = true
+            }
+        }
+        yourTurn = !yourTurn
+    }
+
+    if playing {
+        // Whoever went second last time goes first now, because in this game
+        // going first is worth something and taking turns at it is the only
+        // fair way to run a series.
+        youStart = !youStart
+        let again = replace(replace(input("  another? y/n: "), " ", ""), "\n", "")
+        if again == "n" || again == "N" || again == "no" || again == "q" || again == "" {
+            playing = false
+        }
+    }
+}
+
+print("")
+if gamesPlayed > 0 {
+    print("You won " + string(yourWins) + ", the bot won " + string(botWins)
+        + ", and " + string(draws) + " were drawn.")
+}
