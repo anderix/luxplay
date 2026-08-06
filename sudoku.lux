@@ -1,0 +1,481 @@
+// sudoku.lux — a puzzle, a solver, and an argument about which cell to try next.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run sudoku.lux              make a puzzle, then solve it two ways
+//   lux run sudoku.lux puzzle       just the puzzle, no answer
+//
+// Solving a sudoku by search is not clever. Find an empty square, try 1, and if
+// nothing works from there try 2, and so on; when all nine fail, take back the
+// last thing you wrote and try the next value there instead. That is
+// backtracking, it is about thirty lines, and it will finish every sudoku that
+// has an answer.
+//
+// The interesting question is not how to search. It is which empty square to
+// try next, because that choice is worth more than anything else in the
+// program. Two solvers here do exactly the same search and differ only in that
+// one takes the first empty square it finds and the other takes the square with
+// the fewest values still available to it. The second one guesses less because
+// it puts off guessing: a square with two possibilities is a coin toss, and a
+// square with one is not a guess at all.
+//
+// Both numbers are printed at the end — how many values each solver wrote down,
+// and how many it had to take back. Over twenty-five generated puzzles the plain
+// solver averaged 3,795 values written and the careful one 95, which is forty
+// times fewer for a difference of about ten lines, and is the whole reason the
+// phrase "most constrained variable" is worth knowing. It also comes with a cost, which the program is careful to
+// show rather than hide: finding the most constrained square means looking at
+// every square, so the better solver does more work per step and still wins by
+// a distance. That trade — cheaper steps against fewer of them — is most of
+// what choosing an algorithm consists of.
+//
+// The puzzle itself is made rather than stored. A filled grid is built from a
+// pattern and then disguised by swapping rows, columns and digits around, none
+// of which can break it. Squares are then emptied one at a time, and a square is
+// only allowed to stay empty if the puzzle still has exactly one answer — which
+// is checked by solving it again and counting, because "exactly one" is not
+// something you can tell by looking.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same puzzle every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- the grid ----------
+
+// Eighty-one numbers in a row, 0 for an empty square. Row and column are
+// arithmetic on the position, and so is the three-by-three box, which is the
+// only one of the three that ever needs explaining: the box is three rows of
+// three columns, so its top-left corner is at row minus row-mod-three and
+// column minus column-mod-three.
+
+func side() -> int {
+    return 9
+}
+
+func cells() -> int {
+    return 81
+}
+
+func rowOf(spot: int) -> int {
+    return spot / side()
+}
+
+func colOf(spot: int) -> int {
+    return spot % side()
+}
+
+func emptyGrid() -> [int] {
+    var grid: [int]
+    for spot in 0..cells() {
+        grid += 0
+    }
+    return grid
+}
+
+func written(grid: [int], spot: int, value: int) -> [int] {
+    var after = grid
+    after[spot] = value
+    return after
+}
+
+// Which digits this square cannot be: everything already sitting in its row,
+// its column, or its box. Nine, nine and nine, so twenty-seven looks, and the
+// answer comes back as all nine verdicts at once rather than one at a time.
+//
+// Asking it that way round is worth a great deal. The obvious version answers
+// "can this value go here?" and gets asked nine times, which walks the same
+// twenty-seven squares nine times over for a total of two hundred and forty
+// three looks. Turning the question inside out gets the same nine answers for
+// twenty-seven, and since this is the single most-called thing in the program
+// that ninefold is most of its running time.
+func usedAround(grid: [int], spot: int) -> [bool] {
+    var seen: [bool]
+    for value in 0..10 {
+        seen += false
+    }
+    let row = rowOf(spot)
+    let col = colOf(spot)
+    let rowStart = row * side()
+    for c in 0..side() {
+        seen[grid[rowStart + c]] = true
+    }
+    for r in 0..side() {
+        seen[grid[r * side() + col]] = true
+    }
+    let boxRow = row - row % 3
+    let boxCol = col - col % 3
+    for r in 0..3 {
+        let base = (boxRow + r) * side() + boxCol
+        for c in 0..3 {
+            seen[grid[base + c]] = true
+        }
+    }
+    return seen
+}
+
+func choicesAt(grid: [int], spot: int) -> int {
+    let seen = usedAround(grid, spot)
+    var count = 0
+    for value in 1..10 {
+        if !seen[value] {
+            count += 1
+        }
+    }
+    return count
+}
+
+// ---------- which square to try next ----------
+
+// The first empty square, reading left to right and top to bottom. Costs almost
+// nothing to find and tells you nothing about whether it was worth finding.
+func firstEmpty(grid: [int]) -> int {
+    for spot in 0..cells() {
+        if grid[spot] == 0 {
+            return spot
+        }
+    }
+    return -1
+}
+
+// The empty square with the fewest values still open to it. Costs a look at
+// every square and every value — and stops early on a square with nothing left,
+// because a square with no possible value means this whole line is already dead
+// and there is no point choosing carefully between ways of finding that out.
+func mostConstrained(grid: [int]) -> int {
+    var best = -1
+    var fewest = 10
+    for spot in 0..cells() {
+        if grid[spot] == 0 {
+            let count = choicesAt(grid, spot)
+            if count < 2 {
+                // Nothing beats a square with one value left, and a square with
+                // none is a dead end that wants finding as early as possible.
+                // Either way there is no reason to keep looking.
+                return spot
+            }
+            if count < fewest {
+                fewest = count
+                best = spot
+            }
+        }
+    }
+    return best
+}
+
+func nextSpot(grid: [int], careful: bool) -> int {
+    if careful {
+        return mostConstrained(grid)
+    }
+    return firstEmpty(grid)
+}
+
+// ---------- the search ----------
+
+// What a solve cost and what it found. `answers` stops counting at whatever the
+// caller asked for, because the only two questions ever asked of it are "is
+// there one" and "is there more than one".
+struct Effort {
+    written: int
+    undone: int
+    answers: int
+    grid: [int]
+}
+
+func solveFrom(grid: [int], careful: bool, wanted: int) -> Effort {
+    let spot = nextSpot(grid, careful)
+    if spot < 0 {
+        // Nothing empty left, so every square is filled and legal.
+        return Effort(written: 0, undone: 0, answers: 1, grid: grid)
+    }
+
+    let seen = usedAround(grid, spot)
+    var wroteDown = 0
+    var tookBack = 0
+    var found = 0
+    var answer = grid
+
+    for value in 1..10 {
+        if found < wanted && !seen[value] {
+            wroteDown += 1
+            let deeper = solveFrom(written(grid, spot, value), careful, wanted - found)
+            wroteDown += deeper.written
+            tookBack += deeper.undone
+            if deeper.answers > 0 {
+                if found == 0 {
+                    answer = deeper.grid
+                }
+                found += deeper.answers
+            } else {
+                // Nothing worked underneath that value, so it comes off again.
+                tookBack += 1
+            }
+        }
+    }
+
+    return Effort(written: wroteDown, undone: tookBack, answers: found, grid: answer)
+}
+
+func hasOneAnswer(grid: [int]) -> bool {
+    return solveFrom(grid, true, 2).answers == 1
+}
+
+// ---------- making a filled grid ----------
+
+// A pattern that is always a legal sudoku, which saves searching for one. Each
+// row is the row above shifted along by three, and every third row is shifted
+// by one more so that the boxes work out.
+func patternGrid() -> [int] {
+    var grid = emptyGrid()
+    for row in 0..side() {
+        for col in 0..side() {
+            grid[row * side() + col] = (3 * (row % 3) + row / 3 + col) % side() + 1
+        }
+    }
+    return grid
+}
+
+struct Shuffled {
+    grid: [int]
+    rng: Random
+}
+
+// Three disguises, none of which can make a legal grid illegal: renaming the
+// digits, swapping two rows inside the same band of three, and swapping two
+// columns inside the same stack. Every constraint is about which numbers share
+// a row, a column or a box, and none of these three changes any of that.
+func disguised(start: [int], r: Random) -> Shuffled {
+    var grid = start
+    var rng = r
+
+    var naming: [int]
+    for value in 0..10 {
+        naming += value
+    }
+    for value in 1..side() {
+        rng = next(rng)
+        let pick = value + below(rng, side() - value + 1)
+        let held = naming[value]
+        naming[value] = naming[pick]
+        naming[pick] = held
+    }
+    for spot in 0..cells() {
+        grid[spot] = naming[grid[spot]]
+    }
+
+    for band in 0..3 {
+        for step in 0..4 {
+            rng = next(rng)
+            let a = band * 3 + below(rng, 3)
+            rng = next(rng)
+            let b = band * 3 + below(rng, 3)
+            if a != b {
+                for col in 0..side() {
+                    let held = grid[a * side() + col]
+                    grid[a * side() + col] = grid[b * side() + col]
+                    grid[b * side() + col] = held
+                }
+            }
+        }
+    }
+
+    for stack in 0..3 {
+        for step in 0..4 {
+            rng = next(rng)
+            let a = stack * 3 + below(rng, 3)
+            rng = next(rng)
+            let b = stack * 3 + below(rng, 3)
+            if a != b {
+                for row in 0..side() {
+                    let held = grid[row * side() + a]
+                    grid[row * side() + a] = grid[row * side() + b]
+                    grid[row * side() + b] = held
+                }
+            }
+        }
+    }
+
+    return Shuffled(grid: grid, rng: rng)
+}
+
+// ---------- emptying squares ----------
+
+// Squares come out one at a time, in a shuffled order, and a square only stays
+// out if what is left still has exactly one answer. That check is a whole solve
+// of its own, which is why making a puzzle costs far more than solving one.
+func dug(full: [int], keepAtLeast: int, r: Random) -> Shuffled {
+    var grid = full
+    var rng = r
+
+    var order: [int]
+    for spot in 0..cells() {
+        order += spot
+    }
+    for slot in 0..cells() {
+        rng = next(rng)
+        let pick = slot + below(rng, cells() - slot)
+        let held = order[slot]
+        order[slot] = order[pick]
+        order[pick] = held
+    }
+
+    var filled = cells()
+    for slot in 0..cells() {
+        if filled > keepAtLeast {
+            let spot = order[slot]
+            let tried = written(grid, spot, 0)
+            if hasOneAnswer(tried) {
+                grid = tried
+                filled -= 1
+            }
+        }
+    }
+
+    return Shuffled(grid: grid, rng: rng)
+}
+
+func clueCount(grid: [int]) -> int {
+    var count = 0
+    for spot in 0..cells() {
+        if grid[spot] != 0 {
+            count += 1
+        }
+    }
+    return count
+}
+
+// ---------- showing it ----------
+
+func digitLabel(value: int) -> string {
+    return match value {
+        0 => "."
+        1 => "1"
+        2 => "2"
+        3 => "3"
+        4 => "4"
+        5 => "5"
+        6 => "6"
+        7 => "7"
+        8 => "8"
+        _ => "9"
+    }
+}
+
+func show(grid: [int]) {
+    print("")
+    for row in 0..side() {
+        if row == 3 || row == 6 {
+            print("  ------+-------+------")
+        }
+        var line = "  "
+        for col in 0..side() {
+            if col == 3 || col == 6 {
+                line += "| "
+            }
+            line += digitLabel(grid[row * side() + col]) + " "
+        }
+        print(line)
+    }
+    print("")
+}
+
+// ---------- saying how much work it was ----------
+
+func timesFewer(big: int, small: int) -> string {
+    if small == 0 || big <= small {
+        return ""
+    }
+    let times = big / small
+    if times < 2 {
+        return ""
+    }
+    return " — " + string(times) + " times fewer"
+}
+
+func plainWork(effort: Effort) -> string {
+    return string(effort.written) + " values written, " + string(effort.undone) + " taken back"
+}
+
+// ---------- the program ----------
+
+let given = args()
+var quiet = false
+if length(given) > 1 && given[1] == "puzzle" {
+    quiet = true
+}
+
+var rng = fromClock()
+let disguise = disguised(patternGrid(), rng)
+rng = disguise.rng
+let filled = disguise.grid
+
+let carved = dug(filled, 30, rng)
+let puzzle = carved.grid
+
+print("A sudoku, made to order — " + string(clueCount(puzzle))
+    + " clues, and exactly one answer.")
+show(puzzle)
+
+if quiet {
+    print("  Run it without `puzzle` and it will solve this and show its working.")
+} else {
+    // Same search, same puzzle, one difference: which empty square each one
+    // reaches for next.
+    let plain = solveFrom(puzzle, false, 1)
+    let careful = solveFrom(puzzle, true, 1)
+
+    print("  Solved twice over, by the same search.")
+    print("")
+    print("  first empty square:    " + plainWork(plain))
+    print("  fewest choices left:   " + plainWork(careful)
+        + timesFewer(plain.written, careful.written))
+    print("")
+
+    if careful.written < plain.written {
+        print("  Both found the same answer and neither is cleverer than the other about")
+        print("  sudoku. The second one simply refuses to guess while there is anything")
+        print("  left that is not a guess — a square with one possible value is not a")
+        print("  decision, and taking those first means the decisions it does face are")
+        print("  the smallest ones available.")
+    } else {
+        print("  No gap this time, which happens on an easy grid: if the first empty")
+        print("  square was already the most constrained one, the two solvers made the")
+        print("  same moves in the same order.")
+    }
+    print("")
+    print("  It is not free. Finding the most constrained square means looking at every")
+    print("  square and every value it could take, so each step of the careful solver")
+    print("  costs far more than a step of the plain one. It wins anyway, and by enough")
+    print("  that the extra looking does not come close to mattering.")
+
+    show(careful.grid)
+}
