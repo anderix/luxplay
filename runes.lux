@@ -35,15 +35,16 @@
 //
 //   Q is not a letter here at all. It is written CW, so QUEEN comes out CWEEN.
 //
-//   O and OO are both a single ᚩ, which is why the map says DOR for "door" —
-//   one rune, and the doubled letter simply goes away. (Where OO is pronounced
-//   [u], as in "soon", Tolkien had a separate rune. No mechanical transliterator
-//   can hear which is meant, so this one always writes ᚩ.)
+//   OO is two sounds and two runes. The [u] of "soon" has the ooze rune; the
+//   [o] of "door" is an ordinary O written with one ᚩ, which is why the map
+//   says DOR. English decides this almost perfectly by whether an R follows.
 //
-//   Five letter-pairs get a rune of their own: TH, NG, EE, EA and ST.
+//   Six letter-pairs get a rune of their own: TH, NG, EE, EA, ST and OO.
 //
 //   A is phonemic — ac for [a], os for [o] as in "walk", aesc for [æ] as in
-//   "day". This program always writes ac, for the same reason.
+//   "day". This program always writes ac, because it cannot hear the
+//   difference, which leaves aesc the one rune on Tolkien's chart it never
+//   reaches for.
 //
 // So reading back is not the mirror of writing, and cannot be: a J returns as an
 // I, a V as a U, DOOR as DOR, QUEEN as CWEEN. Every one of those is Tolkien's
@@ -69,12 +70,19 @@ func lowered(text: string, caps: [string], small: [string]) -> string {
     return working
 }
 
-// The two spellings that change before a single rune is chosen: a doubled O
-// collapses to one, and Q becomes CW. Both are one-way, which is why they live
-// here rather than in the chart — the chart has to read in both directions and
-// these cannot.
+// The spellings that change before a single rune is chosen, all of them
+// one-way, which is why they live here rather than in the chart — the chart has
+// to read in both directions and these cannot.
+//
+// Q becomes CW, as Tolkien wrote it. And OOR loses a letter, which needs a word
+// of explanation: OO is two different sounds in English and Tolkien wrote them
+// with two different runes. The [u] of "soon" gets the ooze rune; the [o] of
+// "door" is just an O, written with one ᚩ, which is why the map says DOR. No
+// program can hear which is meant, but English is obliging here — OO before an
+// R is the [o] one almost every time, and everywhere else it is [u]. So OOR
+// collapses to OR, and every other OO goes on to meet the ooze rune below.
 func respelled(text: string) -> string {
-    return replace(replace(replace(text, "oo", "o"), "qu", "cw"), "q", "cw")
+    return replace(replace(replace(text, "oor", "or"), "qu", "cw"), "q", "cw")
 }
 
 // ---------- the chart ----------
@@ -96,7 +104,7 @@ let pieces = [
     "ee",   // ingwaz, the plain diamond, doing duty for the English long e
     "ea",   // ear
     "st",   // stan
-    "ae",   // aesc
+    "oo",   // ger, standing for the [u] of "soon" — see respelled above
 
     // Single letters. J shares I's rune and V shares U's. Z is calc — the pair
     // most charts get wrong, calc being the easiest rune to mistake for a K.
@@ -109,7 +117,7 @@ let pieces = [
 ]
 
 let marks = [
-    "ᚦ", "ᛝ", "ᛜ", "ᛠ", "ᛥ", "ᚫ",
+    "ᚦ", "ᛝ", "ᛜ", "ᛠ", "ᛥ", "ᛄ",
 
     "ᚪ", "ᛒ", "ᚳ", "ᛞ", "ᛖ", "ᚠ", "ᚷ", "ᚻ", "ᛁ", "ᛁ", "ᚴ", "ᛚ", "ᛗ",
     "ᚾ", "ᚩ", "ᛈ", "ᚱ", "ᛋ", "ᛏ", "ᚢ", "ᚢ", "ᚹ", "ᛉ", "ᚣ", "ᛣ",

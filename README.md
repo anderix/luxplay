@@ -143,9 +143,12 @@ charts disagree with each other, and the first version of this program was
 wrong in six places because it was assembled from them. Tolkien's mode is
 orthographic, one rune per letter, with exceptions that are the whole interest
 of it. J shares I's rune and V shares U's. Q is not a letter at all — it is
-written CW, so QUEEN comes out CWEEN. O and OO are both a single ᚩ, which is
-why the map says DOR for "door". Five pairs get a rune apiece: TH, NG, EE, EA
-and ST.
+written CW, so QUEEN comes out CWEEN. OO is two sounds and two runes: the [u] of
+"soon" has its own, while the [o] of "door" is an ordinary O written with a
+single ᚩ, which is why the map says DOR — and English settles which is meant
+almost perfectly by whether an R follows. Six pairs get a rune apiece: TH, NG,
+EE, EA, ST and OO. Only aesc goes unused, because telling an [æ] from an [a] is
+something a program cannot hear.
 
 Run it with no arguments and it checks itself rather than demonstrating itself.
 The dust jacket of The Hobbit carries a line of Tolkien's own runes, so that
