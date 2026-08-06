@@ -1,9 +1,17 @@
 # What todo.lux writes when you use it
 todo.txt
 
+# What flash.lux keeps: your own decks, and the schedule it works out for them
+cards.txt
+*.progress
+
 # What lux build leaves behind: a native binary named after its program
+blackjack
+connect
 dashboard
 drill
+flash
+guess
 hangman
 mandelbrot
 maze
@@ -12,6 +20,7 @@ poker
 random
 rps
 rule30
+runes
 todo
 
 # Generated translations, if you convert in place

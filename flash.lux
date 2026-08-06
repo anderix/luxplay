@@ -1,0 +1,604 @@
+// flash.lux — flashcards that know when to ask you again.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run flash.lux                       everything due today
+//   lux run flash.lux all                   the whole deck, due or not
+//   lux run flash.lux add der Hund = the dog
+//   lux run flash.lux stats                 where the deck stands
+//   lux run flash.lux -d german.txt         a different deck
+//
+// A pile of cards you go through front to back teaches you the easy ones over
+// and over and the hard ones once. This one sorts itself instead.
+//
+// Every card sits in one of five boxes. A card you get right moves up a box; a
+// card you miss goes straight back to the first one, however high it had
+// climbed. What the box decides is how long the card is left alone: box one
+// comes back tomorrow, box two in two days, then four, then eight, then
+// sixteen. So a word you know well is asked about three times a month and a word
+// you keep losing is asked about every day, without you having to decide which
+// is which — getting it wrong is the whole of the sorting mechanism.
+//
+// This is the Leitner system, named for the journalist who described it in
+// 1972, and the arithmetic underneath it is older than that: things are
+// forgotten on a curve, and the moment to be reminded of one is just before it
+// goes. Doubling is a rough guess at where that moment is, and a rough guess
+// applied every day beats a perfect one applied never.
+//
+// Two files, and the split is deliberate. The deck is yours — plain lines of
+// "front = back" that you can write in any editor, mail to somebody, or keep in
+// git. The progress is the program's, kept beside it, and throwing it away
+// costs you the schedule but never the cards.
+
+// ---------- the generator, from random.lux ----------
+
+// The order cards come up in. A deck always asked in the same order gets
+// learned in that order, and then you know the order rather than the words.
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => Random(seed: 1)
+    }
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- what day it is ----------
+
+// Days since the epoch, which is all the calendar this program needs: it never
+// prints a date, it only ever asks whether one number has caught up with
+// another. A clock that cannot be read makes everything due, which is the
+// harmless way to be wrong.
+func todayNumber() -> int {
+    return match run("date", ["+%s"]) {
+        ok(let out)  => daysIn(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func daysIn(printed: string) -> int {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => n / 86400
+        none        => 0
+    }
+}
+
+func noClock(why: string) -> int {
+    print("(no clock: " + why + " — everything counts as due)")
+    return 0
+}
+
+// ---------- cards ----------
+
+// The field is `boxNumber` and not `box`, which is what everything this program
+// prints calls it, because `box` is a reserved word in Rust and a lux struct
+// with a field of that name produces Rust that will not compile. That is lux
+// issue 77, filed the same afternoon over a field named `move`. Two ordinary
+// nouns in one folder is a fair indication of how easy the seam is to hit.
+struct Card {
+    front: string
+    back: string
+    boxNumber: int
+    due: int
+}
+
+func boxes() -> int {
+    return 5
+}
+
+// How long a card in each box is left alone. Doubling, which is the whole
+// schedule: one day, two, four, eight, sixteen.
+func daysFor(box: int) -> int {
+    var span = 1
+    for step in 1..box {
+        span = span * 2
+    }
+    return span
+}
+
+// ---------- tidying text ----------
+
+// lux has no trim, and it cannot be faked with replace, which would take the
+// spaces out of the middle of a phrase as happily as off the ends. Splitting on
+// the space and putting back only the pieces that hold something does the job:
+// the empty pieces are exactly the spaces that were doubled or on an end.
+func tidy(text: string) -> string {
+    let flattened = replace(replace(text, "\t", " "), "\n", "")
+    var out = ""
+    for piece in split(flattened, " ") {
+        if piece != "" {
+            if out != "" {
+                out += " "
+            }
+            out += piece
+        }
+    }
+    return out
+}
+
+// Everything after the first separator, put back together — so that a card can
+// have an equals sign on its back and still read correctly.
+func afterFirst(pieces: [string], joiner: string) -> string {
+    var out = ""
+    for slot in 1..length(pieces) {
+        if slot > 1 {
+            out += joiner
+        }
+        out += pieces[slot]
+    }
+    return out
+}
+
+// ---------- reading the deck ----------
+
+// A line is a card if it has a separator and something on both sides. Blank
+// lines and anything starting with a hash are for the human, not the program.
+func isComment(line: string) -> bool {
+    let plain = tidy(line)
+    let pieces = split(plain, "#")
+    return length(pieces) > 1 && pieces[0] == ""
+}
+
+func deckFrom(text: string) -> [Card] {
+    var cards: [Card]
+    for line in split(text, "\n") {
+        if tidy(line) != "" && !isComment(line) {
+            let pieces = split(line, "=")
+            if length(pieces) > 1 {
+                let front = tidy(pieces[0])
+                let back = tidy(afterFirst(pieces, "="))
+                if front != "" && back != "" {
+                    cards += Card(front: front, back: back, boxNumber: 1, due: 0)
+                }
+            }
+        }
+    }
+    return cards
+}
+
+func loadDeck(path: string) -> [Card] {
+    return deckFrom(textIn(path))
+}
+
+// ---------- reading and writing the progress ----------
+
+// One line a card: box, the day it is next due, and the front it belongs to.
+// The front is the key, so editing a card's front in the deck starts it over —
+// which is the right answer, because a card whose question changed is a
+// different card.
+func progressFrom(text: string, cards: [Card]) -> [Card] {
+    var placed = cards
+    for line in split(text, "\n") {
+        let pieces = split(line, "|")
+        if length(pieces) > 2 {
+            let box = numberIn(pieces[0], 1)
+            let due = numberIn(pieces[1], 0)
+            let front = afterFirst(afterOne(pieces), "|")
+            for slot in 0..length(placed) {
+                if placed[slot].front == front {
+                    placed[slot] = Card(front: placed[slot].front,
+                                        back: placed[slot].back,
+                                        boxNumber: box,
+                                        due: due)
+                }
+            }
+        }
+    }
+    return placed
+}
+
+// The pieces from the second one onward, so that afterFirst can put the front
+// back together when the front itself contains a bar.
+func afterOne(pieces: [string]) -> [string] {
+    var rest: [string]
+    for slot in 1..length(pieces) {
+        rest += pieces[slot]
+    }
+    return rest
+}
+
+func numberIn(text: string, fallback: int) -> int {
+    return match parseInt(tidy(text)) {
+        some(let n) => n
+        none        => fallback
+    }
+}
+
+func loadProgress(path: string, cards: [Card]) -> [Card] {
+    return progressFrom(textIn(path), cards)
+}
+
+func saveProgress(path: string, cards: [Card]) -> bool {
+    var text = ""
+    for card in cards {
+        text += string(card.boxNumber) + "|" + string(card.due) + "|" + card.front + "\n"
+    }
+    return wrote(path, text)
+}
+
+func saveFailed(path: string, why: string) -> bool {
+    eprint("could not write " + path + ": " + why)
+    return false
+}
+
+func wrote(path: string, text: string) -> bool {
+    return match writeFile(path, text) {
+        ok(let saved) => true
+        err(let why)  => saveFailed(path, why)
+    }
+}
+
+// A missing file reads as nothing rather than as a failure, which is what a
+// deck you have not written yet actually is.
+func textIn(path: string) -> string {
+    return match readFile(path) {
+        ok(let had)  => had
+        err(let why) => ""
+    }
+}
+
+// ---------- the starter deck ----------
+
+// A deck that does not exist yet is not an error, it is a first run. Writing
+// something small and real beats printing instructions about a file format:
+// open it, see what a card looks like, replace them with your own.
+func starterDeck() -> string {
+    return "# One card to a line: front = back\n"
+         + "# Lines starting with a hash are ignored, so write yourself notes.\n"
+         + "\n"
+         + "der Hund = the dog\n"
+         + "die Katze = the cat\n"
+         + "das Pferd = the horse\n"
+         + "der Baum = the tree\n"
+         + "das Haus = the house\n"
+         + "die Straße = the street\n"
+         + "das Wasser = the water\n"
+         + "der Schlüssel = the key\n"
+         + "die Nachricht = the message\n"
+         + "der Zufall = chance, coincidence\n"
+}
+
+func writeStarter(path: string) -> bool {
+    return wrote(path, starterDeck())
+}
+
+// ---------- counting ----------
+
+func dueCount(cards: [Card], today: int) -> int {
+    var count = 0
+    for card in cards {
+        if card.due <= today {
+            count += 1
+        }
+    }
+    return count
+}
+
+func inBox(cards: [Card], box: int) -> int {
+    var count = 0
+    for card in cards {
+        if card.boxNumber == box {
+            count += 1
+        }
+    }
+    return count
+}
+
+// The next day anything comes up, so that a session that clears the deck can
+// say when to come back rather than just stopping.
+func nextDue(cards: [Card], today: int) -> int {
+    var soonest = -1
+    for card in cards {
+        if card.due > today {
+            if soonest < 0 || card.due < soonest {
+                soonest = card.due
+            }
+        }
+    }
+    return soonest
+}
+
+func inDays(days: int) -> string {
+    if days == 1 {
+        return "tomorrow"
+    }
+    return "in " + string(days) + " days"
+}
+
+func everyDays(days: int) -> string {
+    if days == 1 {
+        return "every day"
+    }
+    return "every " + string(days) + " days"
+}
+
+func cardWord(count: int) -> string {
+    if count == 1 {
+        return "1 card"
+    }
+    return string(count) + " cards"
+}
+
+// ---------- picking what to ask ----------
+
+// The positions of the cards to be asked about, shuffled. Positions rather than
+// copies, because the answers have to go back to the cards they came from.
+//
+// The generator is used up here and not handed back, unlike everywhere else in
+// this folder that threads one through. Nothing after this point is random, so
+// there is nothing to thread it to.
+func toAsk(cards: [Card], today: int, everything: bool, r: Random) -> [int] {
+    var order: [int]
+    for slot in 0..length(cards) {
+        if everything || cards[slot].due <= today {
+            order += slot
+        }
+    }
+    var rng = r
+    for slot in 0..length(order) {
+        rng = next(rng)
+        let pick = slot + below(rng, length(order) - slot)
+        let held = order[slot]
+        order[slot] = order[pick]
+        order[pick] = held
+    }
+    return order
+}
+
+// ---------- reading what you typed ----------
+
+func trimmed(typed: string) -> string {
+    return replace(replace(typed, " ", ""), "\n", "")
+}
+
+// "yes", "no", "stop", or "" for anything else. Enter on its own means yes,
+// because the honest answer to "did you get it" is usually yes and the tiring
+// part of a review is the typing.
+func gotIt(typed: string) -> string {
+    let plain = trimmed(typed)
+    if plain == "" || plain == "y" || plain == "Y" || plain == "yes" {
+        return "yes"
+    }
+    if plain == "n" || plain == "N" || plain == "no" {
+        return "no"
+    }
+    if plain == "q" || plain == "Q" || plain == "quit" {
+        return "stop"
+    }
+    return ""
+}
+
+// ---------- what the arguments say ----------
+
+// The deck can be named with -d, which has to be read before anything else
+// because it decides which files the rest of the work happens in.
+func deckNamed(given: [string]) -> string {
+    if length(given) > 2 && given[1] == "-d" {
+        return given[2]
+    }
+    return "cards.txt"
+}
+
+func commandIn(given: [string]) -> string {
+    var slot = 1
+    if length(given) > 2 && given[1] == "-d" {
+        slot = 3
+    }
+    if length(given) > slot {
+        return given[slot]
+    }
+    return "due"
+}
+
+func wordsAfter(given: [string]) -> string {
+    var slot = 2
+    if length(given) > 2 && given[1] == "-d" {
+        slot = 4
+    }
+    var out = ""
+    for at in slot..length(given) {
+        if out != "" {
+            out += " "
+        }
+        out += given[at]
+    }
+    return out
+}
+
+func progressPath(deck: string) -> string {
+    return deck + ".progress"
+}
+
+// ---------- the program ----------
+
+let given = args()
+let deckPath = deckNamed(given)
+let command = commandIn(given)
+let today = todayNumber()
+
+var cards = loadDeck(deckPath)
+
+// An empty default deck is a first run and gets something to play with. An
+// empty deck you named yourself is a deck you are in the middle of writing, and
+// filling it with somebody else's German would be presumptuous.
+if length(cards) == 0 && command != "add" {
+    print("No cards in " + deckPath + " yet.")
+    if deckPath == "cards.txt" {
+        if writeStarter(deckPath) {
+            print("Written a starter deck there — ten German words, so there is")
+            print("something to run. Open it and put your own in.")
+        }
+        cards = loadDeck(deckPath)
+    } else {
+        print("One card to a line, front = back. Or:")
+        print("  lux run flash.lux -d " + deckPath + " add front = back")
+    }
+}
+
+cards = loadProgress(progressPath(deckPath), cards)
+
+if command == "add" {
+    let line = wordsAfter(given)
+    let pieces = split(line, "=")
+    if length(pieces) < 2 || tidy(pieces[0]) == "" || tidy(afterFirst(pieces, "=")) == "" {
+        print("A card has two sides: lux run flash.lux add der Hund = the dog")
+    } else {
+        let front = tidy(pieces[0])
+        let back = tidy(afterFirst(pieces, "="))
+        var already = false
+        for card in cards {
+            if card.front == front {
+                already = true
+            }
+        }
+        if already {
+            print("There is already a card for \"" + front + "\".")
+        } else {
+            var text = textIn(deckPath)
+            if length(text) > 0 && !endsInNewline(text) {
+                text += "\n"
+            }
+            text += front + " = " + back + "\n"
+            if wrote(deckPath, text) {
+                print("Added: " + front + " = " + back)
+            }
+        }
+    }
+
+} else if command == "stats" {
+    print("Deck: " + deckPath + " — " + cardWord(length(cards)))
+    print("")
+    for box in 1..boxes() + 1 {
+        let count = inBox(cards, box)
+        var bar = ""
+        for step in 0..count {
+            bar += "▪"
+        }
+        print("  box " + string(box) + " (" + everyDays(daysFor(box)) + "): "
+            + string(count) + " " + bar)
+    }
+    print("")
+    let due = dueCount(cards, today)
+    if due > 0 {
+        print("  " + cardWord(due) + " due now.")
+    } else {
+        let soon = nextDue(cards, today)
+        if soon < 0 {
+            print("  Nothing due, and nothing scheduled.")
+        } else {
+            print("  Nothing due. Next " + inDays(soon - today) + ".")
+        }
+    }
+
+} else if command == "due" || command == "all" {
+    let order = toAsk(cards, today, command == "all", fromClock())
+
+    if length(order) == 0 {
+        let soon = nextDue(cards, today)
+        print("Nothing due today.")
+        if soon >= 0 {
+            print("Next " + inDays(soon - today) + ". `lux run flash.lux all` to go through the deck anyway.")
+        }
+    } else {
+        print(cardWord(length(order)) + " to go through. Enter to see the answer,")
+        print("then y if you had it, n if you did not, q to stop early.")
+        print("")
+
+        var asked = 0
+        var right = 0
+        var movedUp = 0
+        var stopped = false
+
+        for at in 0..length(order) {
+            if !stopped {
+                let slot = order[at]
+                let card = cards[slot]
+                print("  " + string(at + 1) + "/" + string(length(order))
+                    + "   box " + string(card.boxNumber))
+                print("  " + card.front)
+                let waited = input("  ")
+                if trimmed(waited) == "q" {
+                    stopped = true
+                } else {
+                    print("  " + card.back)
+                    var answered = false
+                    while !answered && !stopped {
+                        let said = gotIt(input("  got it? y/n: "))
+                        if said == "stop" {
+                            stopped = true
+                        } else if said == "yes" {
+                            answered = true
+                            asked += 1
+                            right += 1
+                            var box = card.boxNumber + 1
+                            if box > boxes() {
+                                box = boxes()
+                            } else {
+                                movedUp += 1
+                            }
+                            cards[slot] = Card(front: card.front, back: card.back,
+                                               boxNumber: box, due: today + daysFor(box))
+                            print("  → box " + string(box) + ", back " + inDays(daysFor(box)) + ".")
+                        } else if said == "no" {
+                            answered = true
+                            asked += 1
+                            // All the way down, not one box back. A card you
+                            // have just lost is not a card you nearly know.
+                            cards[slot] = Card(front: card.front, back: card.back,
+                                               boxNumber: 1, due: today + daysFor(1))
+                            print("  → box 1, back tomorrow.")
+                        } else {
+                            print("  y or n, or q to stop.")
+                        }
+                    }
+                }
+                print("")
+            }
+        }
+
+        if saveProgress(progressPath(deckPath), cards) {
+            print("── " + string(right) + " of " + string(asked) + " ──")
+            if movedUp > 0 {
+                print(cardWord(movedUp) + " moved up a box.")
+            }
+            let left = dueCount(cards, today)
+            if left > 0 {
+                print(cardWord(left) + " still due — the ones you missed come back tomorrow, not today.")
+            }
+            let soon = nextDue(cards, today)
+            if left == 0 && soon >= 0 {
+                print("Next " + inDays(soon - today) + ".")
+            }
+        }
+    }
+
+} else {
+    print("No such command: " + command)
+    print("Try: nothing at all for what is due, all, add, or stats.")
+}
+
+// A file that already ends in a newline should not get another one, and there
+// is no way to look at the last character of a string in lux. Splitting on the
+// newline tells you anyway: text ending in one has an empty final piece.
+func endsInNewline(text: string) -> bool {
+    let pieces = split(text, "\n")
+    return length(pieces) > 1 && pieces[length(pieces) - 1] == ""
+}

@@ -103,6 +103,109 @@ reports a failed save rather than read from the top of the file, because a
 function cannot see a file-level `let` — except on Swift, where it can, which is
 [lux#76](https://github.com/anderix/lux/issues/76).
 
+`blackjack.lux` is poker's counterpart and deliberately the opposite technique.
+Poker simulates because the space of ways a hand can finish is far too large to
+walk through; blackjack is small enough to walk through, so this one works the
+whole tree out exactly and shows you what standing, hitting and doubling are
+each worth in chips before you choose. Which method is right is decided by the
+size of the problem rather than by taste.
+
+The tables are built downward. Twenty-one is settled — you stand, and the value
+depends only on the dealer. Twenty is settled once twenty-one is. Sixteen is
+settled once everything above it is, because every card you can draw takes you
+higher. Three passes get there with no recursion and no circles: hard totals of
+eleven and up first, since they can never reach a soft total; then soft totals,
+which fall back only on hard totals of twelve and up; then the rest.
+
+The numbers were checked rather than trusted. An independent implementation of
+the same model agrees with all 940 the tables produce — every dealer
+distribution and every stand, hit and double value for every total against every
+upcard — to five decimal places, and it reproduces the famous pair at sixteen
+against a ten: standing -0.5404, hitting -0.5398. Those six ten-thousandths are
+why the program says hitting sixteen is not good, only less bad, and it can show
+you the gap rather than assert it.
+
+Probabilities come from what is genuinely unseen rather than from a fresh deck,
+so they move as the shoe wears down, and the dealer's hole card stays in the
+count until it is turned over — the tutor knows exactly what you know. That
+makes insurance real rather than decorative: it needs the hole card to be a ten
+more than a third of the time, tens are just under a third of a fresh shoe, and
+the program tells you when that has stopped being true. It is the one decision
+in blackjack that counting can turn around.
+
+`connect.lux` is Connect Four against minimax with alpha-beta pruning. The bot
+has no openings and no rules about good moves; it plays the position out to a
+fixed depth, scores what it finds, and walks the answers back up assuming you
+will always pick the reply worst for it. That assumption is why it never hopes —
+it will not set a trap that only works if you miss it. The board is one flat
+array of forty-two, which copies faster than a grid of grids and makes every
+direction a single stride, so walking a line of four is addition.
+
+Difficulty is the same search told to stop sooner — but the three depths were
+measured, not chosen, because the obvious assumption turns out to be false.
+Looking further ahead does not reliably make this bot better. Three hundred
+games a pair across three seeds: depth five beats depth four comfortably and
+depth two in all three hundred, while depth six loses to both of them and depth
+three loses to depth two nearly every game.
+
+That is not a search bug. Pruned and unpruned searches were compared across
+2,352 positions and agree exactly. It is the guess at the bottom: the evaluator
+counts threats, and an unanswered threat counts the same as an unanswerable one,
+so a position judged just after the bot moves looks better than the same
+position judged once the reply is on the board. Searches that stop on different
+sides of that are not measuring the same thing. It is the odd-even effect, and
+the fix is a better guess rather than a deeper search — worth knowing, because
+"just look further ahead" is the first thing anybody reaches for.
+
+It is also the one program here where compiling changes what the program feels
+like rather than just how fast it finishes: the hard bot takes about a second a
+move interpreted and four milliseconds built.
+
+`guess.lux` is the guessing game backwards. You think of the number and the
+program finds it — out of a hundred in seven questions, out of a million in
+twenty — and it does not matter which number you picked, because the program
+never guesses at your number. It guesses at the middle of what it has not ruled
+out, so there is nowhere in the range harder to find than anywhere else. The
+lesson is that doubling the range does not double the work, it adds one
+question. It also catches you moving your number without needing to suspect
+anything: if your answers cannot all be true at once, the range runs out and
+there is nothing left to guess. Then it offers you the same game the usual way
+round, which is how you find out that knowing the trick and doing it are
+different things.
+
+One real bug came out of checking it. The worst-case bound counted doublings up
+to the range, and that is one short for every exact power of two — ten doublings
+reach 1024, but a range of 1024 takes eleven guesses, because the last halving
+leaves two numbers and one of them still has to be asked about. Running every
+number in seven different ranges through the actual search found it, and the
+bound is now tight: the worst case observed equals the number claimed in all of
+them.
+
+`flash.lux` is the second app here, and the useful one. Flashcards in five
+boxes: a card you get right moves up a box, a card you miss drops straight back
+to the first however high it had climbed, and the box decides how long the card
+is left alone — one day, two, four, eight, sixteen. A word you know well comes
+up three times a month and a word you keep losing comes up daily, without you
+deciding which is which. Getting it wrong is the whole of the sorting mechanism.
+
+The deck is a plain text file of `front = back` lines that you can write in any
+editor, mail to somebody, or keep in git; the schedule lives in a second file
+beside it, so throwing the schedule away costs you the timing but never the
+cards. `lux run flash.lux` asks what is due, `all` goes through everything,
+`add der Hund = the dog` adds a card, `stats` shows where the deck stands, and
+`-d german.txt` points the whole thing at a different deck. Run it with no deck
+and it writes you ten German words rather than printing instructions about a
+file format.
+
+Two things in it are lux showing through. There is no `trim`, and `replace`
+cannot fake one — it would take the spaces out of the middle of a phrase as
+happily as off the ends — so tidying a line means splitting it on the space and
+putting back only the pieces that hold something. And the field holding a card's
+box number is called `boxNumber`, because `box` is reserved in Rust and a lux
+struct with a field of that name produces Rust that will not compile; that is
+[lux#77](https://github.com/anderix/lux/issues/77), which was filed the same
+afternoon over a field named `move`.
+
 `dashboard.lux` is the one that looks outward. Everything else here makes its
 own data; this reads the machine — uptime, load against the core count, memory,
 and disk — through the two doors a program has onto the world, `readFile` for
@@ -198,6 +301,7 @@ Each program is one file and needs nothing but lux:
 lux run mandelbrot.lux
 lux run poker.lux
 lux run todo.lux add walk the dog
+lux run flash.lux add der Hund = the dog
 ```
 
 `lux convert rust|swift|go <file>` prints any of them as real source in that
