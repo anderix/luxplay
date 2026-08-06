@@ -25,6 +25,13 @@
 // font trick: the characters are the characters, and they will paste into
 // anything that can show them.
 //
+// Three of them are here because of Tolkien. The futhorc had no letter for the
+// K he needed, nor for SH, nor for the OO of "soon", so he drew his own — and
+// when the runic block was first encoded those three had nowhere to go. Unicode
+// 7.0 added them in 2014: U+16F1 RUNIC LETTER K, U+16F2 RUNIC LETTER SH and
+// U+16F3 RUNIC LETTER OO. The program uses two of them. (SH is not in the chart
+// this follows, and the map spells THRUSH and SHINE with a plain S and H.)
+//
 // Tolkien's mode is orthographic — one rune per letter, whatever it sounds like
 // — with a handful of deliberate exceptions, and the exceptions are the whole
 // interest of the thing:
@@ -101,10 +108,10 @@ let pieces = [
     // The pairs Tolkien gave a rune apiece.
     "th",   // thorn
     "ng",   // ing
-    "ee",   // ingwaz, the plain diamond, doing duty for the English long e
+    "ee",   // ethel, the diamond on legs — Lindberg calls it "eel"
     "ea",   // ear
     "st",   // stan
-    "oo",   // ger, standing for the [u] of "soon" — see respelled above
+    "oo",   // the OO rune, for the [u] of "soon" — see respelled above
 
     // Single letters. J shares I's rune and V shares U's. Z is calc — the pair
     // most charts get wrong, calc being the easiest rune to mistake for a K.
@@ -117,9 +124,9 @@ let pieces = [
 ]
 
 let marks = [
-    "ᚦ", "ᛝ", "ᛜ", "ᛠ", "ᛥ", "ᛄ",
+    "ᚦ", "ᛝ", "ᛟ", "ᛠ", "ᛥ", "ᛳ",
 
-    "ᚪ", "ᛒ", "ᚳ", "ᛞ", "ᛖ", "ᚠ", "ᚷ", "ᚻ", "ᛁ", "ᛁ", "ᚴ", "ᛚ", "ᛗ",
+    "ᚪ", "ᛒ", "ᚳ", "ᛞ", "ᛖ", "ᚠ", "ᚷ", "ᚻ", "ᛁ", "ᛁ", "ᛱ", "ᛚ", "ᛗ",
     "ᚾ", "ᚩ", "ᛈ", "ᚱ", "ᛋ", "ᛏ", "ᚢ", "ᚢ", "ᚹ", "ᛉ", "ᚣ", "ᛣ",
 
     "᛫", "᛬"
@@ -163,11 +170,11 @@ func restOfLine(words: [string], from: int) -> string {
 // above from a claim into something checkable, so with nothing else asked of it
 // the program's first job is to check itself.
 //
-// With one allowance, and it is the interesting one. Tolkien's K is a rune
-// Unicode has no exact match for — the transcriber said so himself, that he
-// could find only one rune where Tolkien plainly drew two, the K having "an
-// extra corner, like a knee" — so he wrote cen in both places and BACK came out
-// with two ᚳ. This program writes kaun for K, the nearest Unicode carries.
+// With one allowance, and it is the interesting one. In 2009 there was no K in
+// the runic block, and the transcriber said as much: he could find only one rune
+// where Tolkien plainly drew two, the K having "an extra corner, like a knee".
+// So he wrote cen in both places and BACK came out with two ᚳ. The letter he
+// wanted was encoded five years later as U+16F1, and this program writes it.
 // Allow that single substitution and every other rune in the line still has to
 // agree, which makes it a real check on the other twenty-odd letters rather
 // than a circular one.
@@ -183,8 +190,8 @@ if length(given) < 2 {
     print("    " + jacketRunes)
     print("  This program, given the same words:")
     print("    " + mine)
-    if replace(mine, "ᚴ", "ᚳ") == jacketRunes {
-        print("  — the same, rune for rune, allowing the transcriber's cen for Tolkien's K.")
+    if replace(mine, "ᛱ", "ᚳ") == jacketRunes {
+        print("  — the same, rune for rune, allowing the cen he wrote before Unicode had a K.")
     } else {
         print("  — and they differ by more than that, which is worth knowing about.")
     }

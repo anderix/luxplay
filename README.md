@@ -134,7 +134,11 @@ runes on Thror's map are: ordinary English that Bilbo's readers decode from the
 chart on the compass rose. Tolkien did not invent the letters; he took the
 Anglo-Saxon futhorc and wrote modern English in it, calling the result "English
 runes". The output is the real Unicode runic block from U+16A0 up, so the
-characters are the characters and will paste into anything that can show them.
+characters are the characters and will paste into anything that can show them —
+including three that exist because of Tolkien. The futhorc had no K of the shape
+he needed, no SH, and no rune for the OO of "soon", so he drew his own, and when
+the runic block was first encoded they had nowhere to go. Unicode 7.0 added them
+in 2014 as U+16F1, U+16F2 and U+16F3, and this uses two of the three.
 
 The chart follows Per Lindberg's *Tolkien's English Runes* (Mellonath Daeron,
 2023), which reads the inscriptions in the book and tabulates what Tolkien
@@ -154,8 +158,8 @@ Run it with no arguments and it checks itself rather than demonstrating itself.
 The dust jacket of The Hobbit carries a line of Tolkien's own runes, so that
 line is in the source and the program transliterates the same words and
 compares — allowing one documented substitution, since the only Unicode
-transcription of it writes cen where Tolkien drew a K that Unicode has no exact
-match for. Everything else has to agree. It also reproduces the door
+transcription of it was made in 2009, five years before the K it needed existed,
+and writes cen twice instead. Everything else has to agree. It also reproduces the door
 inscription's `f[ee]t` and `[th]r[ee]` without being shown them.
 
 Reading back is deliberately not the mirror of writing. A J returns as an I, a V
