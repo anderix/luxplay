@@ -1,0 +1,369 @@
+// weekday.lux — what day of the week was that?
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run weekday.lux                today, and a fact worth proving
+//   lux run weekday.lux 1969 7 20      the day of the moon landing
+//
+// Everything else in this folder searches, simulates or counts. This one just
+// knows. Give it a date and it works out the day of the week with arithmetic and
+// no looking, which is a different kind of program and worth having one of.
+//
+// It does it twice over, by two methods that have nothing to do with each other,
+// and complains if they disagree.
+//
+// The first is Zeller's congruence, published in 1882, and it is the sort of
+// formula that looks like a trick until you see where it comes from. The awkward
+// part of a calendar is February, which changes length; so Zeller starts the
+// year in March and counts January and February as months thirteen and fourteen
+// of the year before, which pushes the ragged month to the end where it cannot
+// disturb anything. After that the months run 31, 30, 31, 30, 31 and so on in a
+// pattern regular enough that a single division tracks it, and the rest is
+// counting leap years.
+//
+// The second is to count the days. Pick a fixed day, work out how many days lie
+// between it and the date you want, and take the remainder on seven. That needs
+// no cleverness about months at all — only care about which years have an extra
+// day in them.
+//
+// Two answers arrived at from different directions is worth more than one
+// arrived at carefully, and it costs about fifteen lines.
+//
+// Then a fact that is easy to state and hard to believe: the thirteenth of the
+// month falls on a Friday more often than on any other day. The Gregorian
+// calendar repeats itself exactly every four hundred years — 146,097 days, which
+// is 20,871 weeks with nothing left over — so there is a finite thing to count
+// rather than an argument to have. The program counts all 4,800 thirteenths in
+// one cycle and prints what it finds.
+
+// ---------- names ----------
+
+func dayName(day: int) -> string {
+    return match day {
+        0 => "Sunday"
+        1 => "Monday"
+        2 => "Tuesday"
+        3 => "Wednesday"
+        4 => "Thursday"
+        5 => "Friday"
+        _ => "Saturday"
+    }
+}
+
+func monthName(month: int) -> string {
+    return match month {
+        1  => "January"
+        2  => "February"
+        3  => "March"
+        4  => "April"
+        5  => "May"
+        6  => "June"
+        7  => "July"
+        8  => "August"
+        9  => "September"
+        10 => "October"
+        11 => "November"
+        _  => "December"
+    }
+}
+
+func ordinal(day: int) -> string {
+    if day == 1 || day == 21 || day == 31 {
+        return string(day) + "st"
+    }
+    if day == 2 || day == 22 {
+        return string(day) + "nd"
+    }
+    if day == 3 || day == 23 {
+        return string(day) + "rd"
+    }
+    return string(day) + "th"
+}
+
+// ---------- leap years ----------
+
+// Every fourth year, except every hundredth, except every four hundredth. The
+// exceptions exist because a year is not 365.25 days but about 365.2422, so
+// adding a day every four years overshoots by three days in four hundred, and
+// the two exceptions take exactly those three days back out.
+func isLeap(year: int) -> bool {
+    if year % 400 == 0 {
+        return true
+    }
+    if year % 100 == 0 {
+        return false
+    }
+    return year % 4 == 0
+}
+
+func daysInMonth(year: int, month: int) -> int {
+    if month == 2 {
+        if isLeap(year) {
+            return 29
+        }
+        return 28
+    }
+    if month == 4 || month == 6 || month == 9 || month == 11 {
+        return 30
+    }
+    return 31
+}
+
+// ---------- the first way: Zeller's congruence ----------
+
+// March is treated as the first month and January and February as the thirteenth
+// and fourteenth of the year before, so that February's changing length lands at
+// the end of the year where nothing has to be counted past it.
+//
+// The 13 * (m + 1) / 5 is the whole trick. From March the months run 31, 30, 31,
+// 30, 31, 31, 30, 31, 30, 31 days, and that pattern advances the weekday by an
+// amount which, summed up, happens to be exactly what integer division by five
+// produces. It is not a coincidence so much as an observation somebody made once
+// and everybody has used since.
+func zeller(year: int, month: int, day: int) -> int {
+    var y = year
+    var m = month
+    if m < 3 {
+        m += 12
+        y -= 1
+    }
+    let k = y % 100
+    let j = y / 100
+    let h = (day + 13 * (m + 1) / 5 + k + k / 4 + j / 4 + 5 * j) % 7
+    // Zeller counts from Saturday; the rest of this program counts from Sunday.
+    return (h + 6) % 7
+}
+
+// ---------- the second way: count the days ----------
+
+// Days from the first of January in year 1 to this date, counting nothing
+// cleverly. Whole years first, then whole months, then the days themselves.
+// Slower than a formula and much harder to get subtly wrong.
+func dayNumber(year: int, month: int, day: int) -> int {
+    var total = 0
+    let before = year - 1
+    total += before * 365 + before / 4 - before / 100 + before / 400
+    for m in 1..month {
+        total += daysInMonth(year, m)
+    }
+    return total + day
+}
+
+// The first of January in year 1 was a Monday on the Gregorian reckoning, and
+// dayNumber calls that day 1, so day 1 has to come out as Monday.
+func countingWay(year: int, month: int, day: int) -> int {
+    return dayNumber(year, month, day) % 7
+}
+
+// ---------- checking a date is real ----------
+
+// Comes back as a reason, or "" when there is nothing wrong with it.
+func complaint(year: int, month: int, day: int) -> string {
+    if year < 1583 {
+        return "The Gregorian calendar started in 1582, and what came before it is a different calendar with different rules — and different in different countries, which is worse. This program stops at 1583."
+    }
+    if month < 1 || month > 12 {
+        return "There are twelve months."
+    }
+    if day < 1 {
+        return "Days start at 1."
+    }
+    if day > daysInMonth(year, month) {
+        return monthName(month) + " " + string(year) + " has "
+             + string(daysInMonth(year, month)) + " days in it."
+    }
+    return ""
+}
+
+// ---------- the thirteenth ----------
+
+// Four hundred years is one whole turn of the Gregorian calendar: 146,097 days,
+// which divides by seven exactly. So counting the thirteenths in any four
+// hundred consecutive years answers the question for all of them at once, and
+// this is a proof by exhaustion rather than an argument.
+func thirteenths(fromYear: int) -> [int] {
+    var counts: [int]
+    for day in 0..7 {
+        counts += 0
+    }
+    for step in 0..400 {
+        let year = fromYear + step
+        for month in 1..13 {
+            counts[zeller(year, month, 13)] += 1
+        }
+    }
+    return counts
+}
+
+func mostCommon(counts: [int]) -> int {
+    var best = 0
+    for day in 0..7 {
+        if counts[day] > counts[best] {
+            best = day
+        }
+    }
+    return best
+}
+
+func leastCommon(counts: [int]) -> int {
+    var worst = 0
+    for day in 0..7 {
+        if counts[day] < counts[worst] {
+            worst = day
+        }
+    }
+    return worst
+}
+
+// ---------- today ----------
+
+struct Date {
+    year: int
+    month: int
+    day: int
+    known: bool
+}
+
+func today() -> Date {
+    return match run("date", ["+%Y %m %d"]) {
+        ok(let out)  => dateFrom(out.stdout)
+        err(let why) => Date(year: 0, month: 0, day: 0, known: false)
+    }
+}
+
+func dateFrom(printed: string) -> Date {
+    let pieces = split(replace(printed, "\n", ""), " ")
+    if length(pieces) < 3 {
+        return Date(year: 0, month: 0, day: 0, known: false)
+    }
+    let year = numberIn(pieces[0])
+    let month = numberIn(pieces[1])
+    let day = numberIn(pieces[2])
+    if year < 1 || month < 1 || day < 1 {
+        return Date(year: 0, month: 0, day: 0, known: false)
+    }
+    return Date(year: year, month: month, day: day, known: true)
+}
+
+// `date` pads the month and day with a zero, and a leading zero is not an
+// invitation to read the number as octal in any language that matters here, but
+// parseInt is still entitled to dislike it. Stripping it costs one line.
+func numberIn(text: string) -> int {
+    let plain = replace(replace(text, " ", ""), "\n", "")
+    return match parseInt(plain) {
+        some(let n) => n
+        none        => numberWithoutZero(plain)
+    }
+}
+
+func numberWithoutZero(text: string) -> int {
+    let pieces = split(text, "0")
+    if length(pieces) > 1 && pieces[0] == "" {
+        return match parseInt(pieces[1]) {
+            some(let n) => n
+            none        => -1
+        }
+    }
+    return -1
+}
+
+// ---------- saying it ----------
+
+func dateLabel(year: int, month: int, day: int) -> string {
+    return "the " + ordinal(day) + " of " + monthName(month) + " " + string(year)
+}
+
+func agoLabel(days: int) -> string {
+    if days == 0 {
+        return "which is today"
+    }
+    if days > 0 {
+        return "which was " + string(days) + " days ago"
+    }
+    return "which is " + string(-days) + " days from now"
+}
+
+// ---------- the program ----------
+
+let given = args()
+
+if length(given) >= 4 {
+    let year = numberIn(given[1])
+    let month = numberIn(given[2])
+    let day = numberIn(given[3])
+    let wrong = complaint(year, month, day)
+
+    if wrong != "" {
+        print(wrong)
+    } else {
+        let byFormula = zeller(year, month, day)
+        let byCounting = countingWay(year, month, day)
+
+        print("")
+        if byFormula == byCounting {
+            print("  " + dayName(byFormula) + ", " + dateLabel(year, month, day) + ".")
+        } else {
+            print("  " + dayName(byFormula) + " by the formula and "
+                + dayName(byCounting) + " by counting the days, which cannot both")
+            print("  be right and means something above is wrong.")
+        }
+
+        let now = today()
+        if now.known {
+            let gap = dayNumber(now.year, now.month, now.day) - dayNumber(year, month, day)
+            print("  " + agoLabel(gap) + ".")
+        }
+        if isLeap(year) {
+            print("  " + string(year) + " was a leap year.")
+        }
+        print("")
+    }
+
+} else {
+    let now = today()
+    print("")
+    if now.known {
+        print("  Today is " + dayName(zeller(now.year, now.month, now.day)) + ", "
+            + dateLabel(now.year, now.month, now.day) + ".")
+    } else {
+        print("  I cannot read the clock, so I do not know what today is.")
+    }
+    print("")
+    print("  Give me a date and I will tell you the day: lux run weekday.lux 1969 7 20")
+    print("")
+
+    // The counting, which is the point of the program more than the lookup is.
+    let counts = thirteenths(2000)
+    let top = mostCommon(counts)
+    let bottom = leastCommon(counts)
+
+    print("  The thirteenth of the month, over one full turn of the calendar —")
+    print("  four hundred years, 4,800 thirteenths, after which the whole thing")
+    print("  repeats exactly:")
+    print("")
+    // Bars drawn from the smallest count rather than from zero. Seven bars of
+    // roughly six hundred and eighty are seven identical bars; the whole story
+    // is in the last few, so that is where the chart starts.
+    for day in 0..7 {
+        var bar = ""
+        for step in 0..counts[day] - counts[bottom] {
+            bar += "▪"
+        }
+        var line = "    " + dayName(day)
+        for pad in 0..10 - length(dayName(day)) {
+            line += " "
+        }
+        print(line + string(counts[day]) + "  " + bar)
+    }
+    print("")
+    print("  " + dayName(top) + " wins, by " + string(counts[top] - counts[bottom])
+        + " over " + dayName(bottom) + ".")
+    print("")
+    print("  It comes out uneven for a reason that has nothing to do with luck: four")
+    print("  hundred years is 146,097 days, and 146,097 divides by seven exactly. A")
+    print("  cycle that closes on a whole number of weeks cannot spread 4,800 dates")
+    print("  evenly over seven days, because 4,800 does not divide by seven either.")
+    print("  Something has to be left over, and it turns out to be Friday.")
+    print("")
+}
