@@ -88,8 +88,15 @@ func lowered(text: string, caps: [string], small: [string]) -> string {
 // program can hear which is meant, but English is obliging here — OO before an
 // R is the [o] one almost every time, and everywhere else it is [u]. So OOR
 // collapses to OR, and every other OO goes on to meet the ooze rune below.
+//
+// WH is written HW, which is how Old English spelled that sound — hwæt, hwil,
+// hwa. Tolkien kept it: the map says HWEN where we would write WHEN, and
+// Lindberg notes it as deliberate rather than a slip. Attested for that one
+// word, and generalised here on the grounds that the man wrote the textbook.
 func respelled(text: string) -> string {
-    return replace(replace(replace(text, "oor", "or"), "qu", "cw"), "q", "cw")
+    let ooFixed = replace(text, "oor", "or")
+    let qFixed = replace(replace(ooFixed, "qu", "cw"), "q", "cw")
+    return replace(qFixed, "wh", "hw")
 }
 
 // ---------- the chart ----------
