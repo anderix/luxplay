@@ -86,7 +86,7 @@ func regularStyle() -> Style {
 func hardStyle() -> Style {
     return Style(
         name: "hard",
-        habit: "It reads its hand carefully, pays exactly the right price, bets thinner than is comfortable, and bluffs about one time in four.",
+        habit: "It reads its hand carefully, pays exactly the right price, bets hands it is only just ahead with, and bluffs about one time in four.",
         trials: 900,
         callMargin: 0,
         raiseAt: 57,
@@ -94,15 +94,20 @@ func hardStyle() -> Style {
         bluffPercent: 24)
 }
 
-func chooseStyle() -> Style {
+func styleMenu() {
     print("Who are you playing?")
     print("  e — easy: calls too much and never bluffs, and looks at its own hand carelessly")
     print("  r — regular: pays the right price and bluffs now and then")
-    print("  h — hard: reads its hand closely, bets thin, and bluffs often")
+    print("  h — hard: reads its hand closely, bets hands it is barely ahead with, and bluffs often")
+    print("  n — new to this: walk me through the game first")
+}
+
+func chooseStyle() -> Style {
+    styleMenu()
     var picked = regularStyle()
     var chosen = false
     while !chosen {
-        let typed = replace(replace(input("  e/r/h: "), " ", ""), "\n", "")
+        let typed = replace(replace(input("  e/r/h/n: "), " ", ""), "\n", "")
         if typed == "e" || typed == "E" || typed == "easy" {
             picked = easyStyle()
             chosen = true
@@ -112,11 +117,87 @@ func chooseStyle() -> Style {
         } else if typed == "h" || typed == "H" || typed == "hard" {
             picked = hardStyle()
             chosen = true
+        } else if typed == "n" || typed == "N" || typed == "new" {
+            walkthrough()
+            styleMenu()
         } else {
-            print("  One of e, r, or h.")
+            print("  One of e, r, h, or n.")
         }
     }
     return picked
+}
+
+// ---------- the game, for somebody who has never played it ----------
+
+// Offered rather than forced, because the version that makes you read the rules
+// before you can touch the cards is the version nobody reads. It says what the
+// words mean in the order the game uses them, and stops.
+func walkthrough() {
+    print("")
+    print("  Hold'em in one screen.")
+    print("")
+    print("  You are dealt two cards that only you see. Five more come face up in")
+    print("  the middle and both players share them: three at once, called the")
+    print("  flop, then a fourth called the turn, then a fifth called the river.")
+    print("  Your hand is the best five cards you can make out of those seven, and")
+    print("  you never have to say which five — the cards speak for themselves.")
+    print("")
+    print("  There is a round of betting four times over: before the flop, and")
+    print("  again after each new card. When it is your turn you can")
+    print("")
+    print("    check (k)  pass, when there is nothing to pay. It costs nothing.")
+    print("    bet (b)    put chips in when nobody else has.")
+    print("    call (c)   pay what the other player bet, and stay in the hand.")
+    print("    raise (r)  pay it, and put more on top.")
+    print("    fold (f)   give the hand up, and with it whatever you put in.")
+    print("")
+    print("  Every hand opens with two forced bets called the blinds, so that")
+    print("  there is always something in the middle worth playing for. The")
+    print("  button is whoever acts last once the flop is out, which is worth")
+    print("  having, so it moves from one player to the other every hand.")
+    print("")
+    print("  Whoever is still in at the end with the better five cards takes the")
+    print("  pot. If the other player folds first you take it without showing")
+    print("  anything, which is a large part of the game.")
+    print("")
+    print("  Before each of your turns the tutor says how often you win the hand")
+    print("  from where you are standing, and what a call is costing you. Type ?")
+    print("  at any prompt to see what beats what.")
+    print("")
+    print("  Start on easy.")
+    print("")
+}
+
+// The one word the hand names use that the hand names do not explain. It can
+// turn up either mid-hand or at a showdown, so it lives in a function and
+// whichever gets there first says it.
+func kickerNote() {
+    print("  (A kicker is the spare card left over once the pair or the set is")
+    print("   counted. When two hands are the same shape it is what decides")
+    print("   between them.)")
+}
+
+// Nine shapes, best first. The question every beginner has, on tap, because
+// asking it in the middle of a hand is a worse experience than answering it.
+func handRanks() {
+    print("")
+    print("  What beats what, best at the top:")
+    print("")
+    print("    straight flush   five in a row, all one suit     9♥ 8♥ 7♥ 6♥ 5♥")
+    print("    four of a kind   all four of one rank            7♠ 7♥ 7♦ 7♣ K♠")
+    print("    full house       three of one, two of another    9♠ 9♥ 9♦ 4♠ 4♣")
+    print("    flush            five of one suit, any order     A♦ J♦ 8♦ 5♦ 2♦")
+    print("    straight         five in a row, suits mixed      8♠ 7♦ 6♦ 5♣ 4♥")
+    print("    three of a kind  three of one rank               Q♠ Q♥ Q♦ 9♣ 3♠")
+    print("    two pair         two of one, two of another      J♠ J♦ 5♥ 5♣ 8♠")
+    print("    a pair           two of one rank                 A♠ A♣ T♦ 7♥ 2♠")
+    print("    high card        none of the above               K♠ J♦ 9♥ 6♣ 3♠")
+    print("")
+    print("  Two hands of the same shape are settled by their highest cards, and")
+    print("  the spare card that ends up doing the settling is called the kicker.")
+    print("  A pair of nines with an ace beside it beats a pair of nines with a")
+    print("  four, and that ace is the kicker.")
+    print("")
 }
 
 // ---------- naming cards ----------
@@ -364,20 +445,36 @@ func scoreName(value: int) -> string {
     let first = (value / 28561) % 13
     let second = (value / 2197) % 13
     let third = (value / 169) % 13
+    let fourth = (value / 13) % 13
+    let fifth = value % 13
     // Two hands can share a category and a pair and still not be equal, so the
     // kicker goes in the name — otherwise a showdown reads as a tie that isn't.
+    //
+    // The two shapes with no pair in them are settled by all five cards at once
+    // and no single kicker can stand for that, so those two say all five. It is
+    // the common case at a showdown and the one that otherwise prints the same
+    // words on both sides of a pot somebody won.
     return match category {
         8 => "a straight flush, " + rankLabel(first) + " high"
-        7 => "four " + rankPlural(first)
+        7 => "four " + rankPlural(first) + ", " + rankLabel(second) + " kicker"
         6 => "a full house, " + rankPlural(first) + " full of " + rankPlural(second)
-        5 => "a flush, " + rankLabel(first) + " high"
+        5 => "a flush, " + rankLabel(first) + " high — "
+             + fiveRanks(first, second, third, fourth, fifth)
         4 => "a straight, " + rankLabel(first) + " high"
-        3 => "three " + rankPlural(first) + ", " + rankLabel(second) + " kicker"
+        3 => "three " + rankPlural(first) + ", " + rankLabel(second) + " "
+             + rankLabel(third) + " kickers"
         2 => "two pair, " + rankPlural(first) + " and " + rankPlural(second)
              + ", " + rankLabel(third) + " kicker"
-        1 => "a pair of " + rankPlural(first) + ", " + rankLabel(second) + " kicker"
-        _ => rankLabel(first) + " high"
+        1 => "a pair of " + rankPlural(first) + ", " + rankLabel(second) + " "
+             + rankLabel(third) + " " + rankLabel(fourth) + " kickers"
+        _ => rankLabel(first) + " high — "
+             + fiveRanks(first, second, third, fourth, fifth)
     }
+}
+
+func fiveRanks(a: int, b: int, c: int, d: int, e: int) -> string {
+    return rankLabel(a) + " " + rankLabel(b) + " " + rankLabel(c) + " "
+         + rankLabel(d) + " " + rankLabel(e)
 }
 
 // ---------- how often this hand wins ----------
@@ -473,16 +570,16 @@ func startingNote(hole: [int]) -> string {
     }
     if top == bottom {
         if top >= 10 {
-            return "A big pocket pair — already a made hand, and ahead of almost any two cards it could be facing."
+            return "A big pair already, before a single shared card is out, and ahead of almost any two cards it could be facing."
         }
         if top >= 5 {
-            return "A middling pocket pair. It wins small pots as it stands and big ones on the one flop in eight that makes it trips."
+            return "A middling pair. It wins small pots as it stands, and big ones on the one flop in eight that turns it into three of a kind."
         }
-        return "A small pocket pair. Cheap to see a flop with, but unless it makes trips it is second best more often than it looks."
+        return "A small pair. Cheap to see a flop with, but unless it turns into three of a kind it is second best more often than it looks."
     }
     let gap = top - bottom
     if suited && gap == 1 {
-        return "Suited connectors. They miss most flops, and the flushes and straights they do make are worth more than the flops they cost."
+        return "Two cards next to each other in the same suit. They miss most flops, and the flushes and straights they do make are worth more than the flops they cost."
     }
     if suited {
         return "Suited, which is worth about two percent more than the same two cards in different suits — real, but less than most people play it for."
@@ -501,8 +598,9 @@ func startingNote(hole: [int]) -> string {
 let preflopTrials = 1000
 let postflopTrials = 1200
 
-print("Heads-up hold'em, 200 chips each, blinds 1 and 2.")
-print("One raise to a street, and a raise is half the pot.")
+print("Texas hold'em, just you and the bot. 200 chips each.")
+print("Each hand opens with forced bets of 1 and 2, and each round of betting")
+print("allows one raise, which is half the pot.")
 print("")
 
 let style = chooseStyle()
@@ -525,9 +623,21 @@ var timidFolds = 0
 var wildBets = 0
 var missedValue = 0
 
+// A word gets explained the first time it appears on screen and never again.
+// Naming a thing while somebody is looking at it beats naming it in a list of
+// rules half an hour earlier, and a note that repeats every hand stops being
+// read by the third one.
+var flopSaid = false
+var turnSaid = false
+var riverSaid = false
+var oddsSaid = false
+var priceSaid = false
+var kickerSaid = false
+
 print("")
 print("Playing the " + style.name + " bot. " + style.habit)
 print("Type f to fold, c to call, k to check, b to bet, r to raise, q to leave.")
+print("Type ? at any point to see what beats what.")
 print("")
 
 while stillPlaying && yourChips > 1 && botChips > 1 {
@@ -573,6 +683,12 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
         seat = "The bot is on the button. You post the big blind."
     }
     print(seat)
+    if handsPlayed == 1 {
+        print("  (The blinds are two forced bets that open every hand, so there is")
+        print("   always something in the middle worth playing for. The button is")
+        print("   whoever acts last once the flop is out — worth having, so it")
+        print("   changes hands each time.)")
+    }
     print("You hold " + handLabel(yourHole))
 
     var stage = 0
@@ -587,16 +703,30 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
             board += deck[6]
             print("")
             print("flop:  " + handLabel(board))
+            if !flopSaid {
+                print("  (The flop: three cards face up that belong to both of you.")
+                print("   Your hand is the best five of these and your own two.)")
+                flopSaid = true
+            }
         }
         if stage == 2 {
             board += deck[7]
             print("")
             print("turn:  " + handLabel(board))
+            if !turnSaid {
+                print("  (The turn: a fourth shared card, with one still to come.)")
+                turnSaid = true
+            }
         }
         if stage == 3 {
             board += deck[8]
             print("")
             print("river: " + handLabel(board))
+            if !riverSaid {
+                print("  (The river: the last card. Whatever you are holding now is")
+                print("   what you are holding at the end.)")
+                riverSaid = true
+            }
         }
         if stage > 0 {
             yourStreet = 0
@@ -637,15 +767,33 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
                 if stage == 0 {
                     print("  " + startingNote(yourHole))
                 } else {
-                    print("  You have " + scoreName(best(joined(yourHole, board))) + ".")
+                    let holding = scoreName(best(joined(yourHole, board)))
+                    print("  You have " + holding + ".")
+                    if !kickerSaid && contains(holding, "kicker") {
+                        kickerNote()
+                        kickerSaid = true
+                    }
                 }
                 print("  You win this hand about " + string(equity) + "% of the time from here.")
+                if !oddsSaid {
+                    print("  (Nobody counted that up beforehand. The tutor just dealt the")
+                    print("   rest of the hand out a thousand times over and saw how often")
+                    print("   you finished in front.)")
+                    oddsSaid = true
+                }
 
                 var need = 0
                 if toCall > 0 {
                     need = breakEven(toCall, pot)
                     print("  Calling costs " + string(toCall) + " into a pot of " + string(pot)
                         + ", so it has to be good " + string(need) + "% of the time to break even.")
+                    if !priceSaid {
+                        print("  (That is the price of the hand, and it is the thing to watch.")
+                        print("   A big pot pays you enough that a hand winning well under")
+                        print("   half the time is still worth paying for; a small one does")
+                        print("   not. Compare the two numbers, not the cards.)")
+                        priceSaid = true
+                    }
                     // The simulation deals the opponent any two cards, which is
                     // exactly what somebody who just bet into you does not have.
                     // How wrong that makes the number depends on who bet.
@@ -708,6 +856,10 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
                         } else {
                             print("  You bet " + string(put) + ".")
                         }
+                    } else if move == "?" {
+                        // Looking something up is not a move. The pot is
+                        // untouched and the same question comes round again.
+                        handRanks()
                     } else {
                         print("  " + refusal(toCall, raisesLeft > 0))
                     }
@@ -827,10 +979,16 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
             }
             let yourScore = best(joined(yourHole, board))
             let theirScore = best(joined(botHole, board))
+            let yourName = scoreName(yourScore)
+            let theirName = scoreName(theirScore)
             print("")
             print("  board: " + handLabel(board))
-            print("  the bot held " + handLabel(botHole) + "— " + scoreName(theirScore))
-            print("  you held     " + handLabel(yourHole) + "— " + scoreName(yourScore))
+            print("  the bot held " + handLabel(botHole) + "— " + theirName)
+            print("  you held     " + handLabel(yourHole) + "— " + yourName)
+            if !kickerSaid && (contains(yourName, "kicker") || contains(theirName, "kicker")) {
+                kickerNote()
+                kickerSaid = true
+            }
             if yourScore > theirScore {
                 yourChips += pot
                 print("  You win " + string(pot) + ".")
@@ -871,10 +1029,10 @@ if decisionsMade > 0 {
 
     if loosecalls > 0 {
         print("")
-        print("You called past the price " + string(loosecalls) + " times, paying "
+        print("You called " + string(loosecalls) + " times when the price was wrong, paying "
             + string(chipsCalledOff) + " chips to do it. By the numbers on the screen when you paid, those calls came to about "
             + string(costOfLooseCalls) + " chips worse than folding would have been.")
-        print("This is the leak worth caring about, because it costs the same whether the hand won or lost. The price was wrong when you paid it, and how the cards happened to fall afterwards does not change that.")
+        print("This is the mistake worth caring about, because it costs the same whether the hand won or lost. The price was wrong when you paid it, and how the cards happened to fall afterwards does not change that.")
     }
     if timidFolds > 0 {
         print("")
@@ -894,7 +1052,7 @@ if decisionsMade > 0 {
     }
 
     print("")
-    print("Spots the tutor called close are not counted either way. And all of it rests on equity against any two cards, which is the one assumption you have just spent a session learning to distrust.")
+    print("Spots the tutor called close are not counted either way. And every one of those percentages was measured against any two cards, which is the one assumption you have just spent a session learning to distrust.")
 }
 
 // ---------- the pieces the table above leans on ----------
@@ -927,19 +1085,19 @@ func raiseAmount(toCall: int, pot: int, chips: int) -> int {
 func promptFor(toCall: int, canRaise: bool) -> string {
     if toCall > 0 {
         if canRaise {
-            return "f/c/r/q"
+            return "f/c/r/q/?"
         }
-        return "f/c/q"
+        return "f/c/q/?"
     }
     if canRaise {
-        return "k/b/q"
+        return "k/b/q/?"
     }
-    return "k/q"
+    return "k/q/?"
 }
 
 func refusal(toCall: int, canRaise: bool) -> string {
     if toCall > 0 && !canRaise {
-        return "There is a bet to you and the street's one raise is spent, so it is fold or call."
+        return "There is a bet to you and this round's one raise is already spent, so it is fold or call."
     }
     if toCall > 0 {
         return "There is a bet to you: fold, call, or raise."
@@ -950,17 +1108,23 @@ func refusal(toCall: int, canRaise: bool) -> string {
     return "Nothing to call: check or bet."
 }
 
+// Empty means the input ran dry — piped in, or the terminal closed — and the
+// only safe reading of that is that nobody is there to play. Anything else
+// unrecognised comes back as nothing at all, so the prompt asks again.
 func firstLetter(typed: string) -> string {
     let plain = replace(replace(typed, " ", ""), "\n", "")
     if plain == "" {
         return "q"
+    }
+    if plain == "?" || plain == "hands" || plain == "ranks" {
+        return "?"
     }
     for choice in ["f", "c", "k", "b", "r", "q"] {
         if plain == choice || plain == upperOf(choice) {
             return choice
         }
     }
-    return "?"
+    return ""
 }
 
 func upperOf(letter: string) -> string {

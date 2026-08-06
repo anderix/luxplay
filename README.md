@@ -44,14 +44,23 @@ whole numbers and says "about". The tutor also says out loud what its own number
 leaves out — equity against *any two cards* is not equity against the hand of
 somebody who just bet into you.
 
+You do not have to know the game to start. There is a fourth choice on the
+opening prompt that walks you through hold'em in one screen, and after that the
+program names things as they happen rather than in advance: what a flop is the
+first time one lands, what a kicker is the first time one decides a hand, what
+the price means the first time there is one to pay. Each note appears once and
+never again. Typing `?` at any prompt shows what beats what, which is the
+question a beginner has constantly and the one a poker program usually assumes
+you already know.
+
 The bot knows its own cards, the pot, and nothing else, and it comes in three
 strengths you pick before the first hand. The interesting part is how the easy
 one is made weak: not by handing it bad rules but by giving it a hundred and
 fifty trials to read its own hand instead of nine hundred, so it genuinely
 misjudges what it is holding. On top of that it calls past the price it is being
 offered and never bluffs. Bet into it across thirty hands and it folds not once.
-The hard bot pays exactly the right price, bets thinner than is comfortable, and
-bluffs about one hand in four; the same mindless betting that breaks even against
+The hard bot pays exactly the right price, bets hands it is only just ahead
+with, and bluffs about one hand in four; the same mindless betting that breaks even against
 the easy bot loses half a stack to it.
 
 Because the opponent differs, the advice differs with it. Against the bot that
@@ -64,8 +73,8 @@ opponents to feel the difference against is the only honest way to teach it.
 
 When you leave, it tells you how you played. Every decision is scored against
 the advice that was on the screen when you made it — how many matched, how often
-you called past the price and what those calls were worth by the odds at the
-time, how often you folded a price worth paying or checked a hand that wanted
+you called when the price was wrong and what those calls were worth by the odds
+at the time, how often you folded a price worth paying or checked a hand that wanted
 betting. Chips at the end are mostly the cards you were dealt; this is the part
 that was yours. Spots the tutor itself called close are not scored either way,
 because marking you against advice it did not really have would be worse than
