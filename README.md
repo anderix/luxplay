@@ -143,8 +143,14 @@ compares. It matches rune for rune — including the doubled ᚳᚳ Tolkien used
 the "ck" in BACK, which is his spelling rather than a letter of the alphabet.
 That reading is where the mapping for TH, E, H, O, B, I, T, R, A, N, D, G and
 the word separator comes from; the digraph runes for EE, OO, EA and ST, and
-calc for K, follow the futhorc's own values, and the source marks which is
-which.
+calc for K, come from the Hobbit chart, and the source marks which is which.
+
+It is aiming at Tolkien's alphabet rather than the archaeologists', and the two
+part company where modern English needs letters Old English did not. English
+wants a V distinct from F and a Z distinct from X, and historical inscriptions
+would fold each pair into one rune. Here every letter keeps its own, which is
+what writing modern English in runes requires and what makes the round trip
+exact.
 
 The ordering of the chart is the whole program. Each replacement sweeps the
 entire text, so a piece containing another piece has to be tried first — "th"

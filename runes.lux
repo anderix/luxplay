@@ -23,6 +23,19 @@
 // all come from reading it. The rest — the digraph runes for EE, OO, EA, ST,
 // and calc for K — follow the futhorc's own values and the chart Tolkien
 // printed, and are marked below where they are a choice rather than a reading.
+//
+// The target is Tolkien's alphabet rather than the archaeologists', and the two
+// part company over letters modern English has and Old English did not need.
+// English wants a V distinct from F and a Z distinct from X; historical futhorc
+// inscriptions would write both pairs with one rune each and let context sort it
+// out. Since what is being written here is modern English, every letter gets its
+// own rune — ᚡ for V and ᛎ for Z, both of which the runic block carries — and
+// the round trip stays exact as a result. An epigrapher would object. Bilbo
+// would not, and the map in the front of the book is his.
+//
+// The same reasoning covers ᛟ for OO, whose value in Old English was /ø/, the
+// vowel in German schön, and nothing like the sound in moon. It is here because
+// it is the Hobbit chart's letter, which is the chart this program is for.
 
 // ---------- turning capitals into small letters ----------
 
@@ -60,8 +73,8 @@ let pieces = [
     "th",   // thorn — attested on the dust jacket, in THE and THERE
     "ck",   // Tolkien wrote BACK as ᛒᚪᚳᚳ, two cens, so this is his spelling
     "ng",   // ing
-    "ee",   // eoh, put to work for the English long e
-    "oo",   // ethel, likewise for the long o
+    "ee",   // eoh, whose futhorc value /iː/ is exactly the English "ee"
+    "oo",   // ethel — the weakest choice here; see the note below
     "ea",   // ear
     "st",   // stan
     "ae",   // aesc
