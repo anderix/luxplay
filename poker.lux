@@ -870,10 +870,10 @@ while stillPlaying && yourChips > 1 && botChips > 1 {
                 // at all, because it did not have an answer worth marking.
                 if youDid != "" {
                     decisionsMade += 1
-                    if youDid == tip.move {
+                    if youDid == tip.play {
                         decisionsAgreed += 1
                     } else if tip.firm {
-                        if youDid == "c" && tip.move == "f" {
+                        if youDid == "c" && tip.play == "f" {
                             loosecalls += 1
                             chipsCalledOff += toCall
                             // callValue is negative here, which is the point.
@@ -1158,8 +1158,14 @@ func betReadNote(style: Style) -> string {
 // the words for it. Splitting those in two would let the sentence you read and
 // the answer the summary scores you against drift apart, and a tutor that marks
 // you against advice it didn't give is worse than no tutor.
+// `play` rather than `move`, which is what it holds and what it wanted to be
+// called: a lux struct with a field named `move` produces Rust that will not
+// compile, because `move` is a Rust keyword. That is lux issue 77. The
+// declaration order matters too — Swift's memberwise initializer insists the
+// arguments arrive in the order the fields were declared, which is lux issue
+// 78 — so every constructor below reads play, words, firm.
 struct Suggestion {
-    move: string
+    play: string
     words: string
     firm: bool
 }
@@ -1167,25 +1173,30 @@ struct Suggestion {
 func suggest(equity: int, need: int, toCall: int, canRaise: bool, style: Style) -> Suggestion {
     if toCall > 0 {
         if equity >= 70 && canRaise {
-            return Suggestion(move: "b", firm: true,
-                words: "Raise. You are so far ahead of this price that the mistake would be letting the pot stay small.")
+            return Suggestion(play: "b",
+                words: "Raise. You are so far ahead of this price that the mistake would be letting the pot stay small.",
+                firm: true)
         }
         if equity >= need + 12 {
-            return Suggestion(move: "c", firm: true,
-                words: "Call, comfortably — you are winning far more often than the price asks for.")
+            return Suggestion(play: "c",
+                words: "Call, comfortably — you are winning far more often than the price asks for.",
+                firm: true)
         }
         if equity >= need {
             // Inside a point or two of the price, either answer is worth
             // near enough the same, so nothing is scored against you here.
-            return Suggestion(move: "c", firm: equity >= need + 2,
-                words: "Call, but only just. This is close enough that either answer is nearly the same in the long run.")
+            return Suggestion(play: "c",
+                words: "Call, but only just. This is close enough that either answer is nearly the same in the long run.",
+                firm: equity >= need + 2)
         }
         if equity >= need - 6 {
-            return Suggestion(move: "f", firm: false,
-                words: "Fold, narrowly. You are behind the price, and hands this close are where a session leaks.")
+            return Suggestion(play: "f",
+                words: "Fold, narrowly. You are behind the price, and hands this close are where a session leaks.",
+                firm: false)
         }
-        return Suggestion(move: "f", firm: true,
-            words: "Fold. You need " + string(need) + "% and you have " + string(equity) + "%, and no amount of hoping closes that.")
+        return Suggestion(play: "f",
+                words: "Fold. You need " + string(need) + "% and you have " + string(equity) + "%, and no amount of hoping closes that.",
+                firm: true)
     }
 
     var valueAt = 62
@@ -1194,28 +1205,34 @@ func suggest(equity: int, need: int, toCall: int, canRaise: bool, style: Style) 
     }
     if equity >= valueAt && canRaise {
         if callsTooMuch(style) {
-            return Suggestion(move: "b", firm: true,
-                words: "Bet. You would want a stronger hand than this against most opponents, but this one calls with too much for that to matter.")
+            return Suggestion(play: "b",
+                words: "Bet. You would want a stronger hand than this against most opponents, but this one calls with too much for that to matter.",
+                firm: true)
         }
-        return Suggestion(move: "b", firm: true,
-            words: "Bet. A hand this strong wants chips in the pot while you are the one holding it.")
+        return Suggestion(play: "b",
+                words: "Bet. A hand this strong wants chips in the pot while you are the one holding it.",
+                firm: true)
     }
     if equity >= 50 {
-        return Suggestion(move: "k", firm: true,
-            words: "Check. You are a shade ahead, but not far enough that a bet would be called by anything worse.")
+        return Suggestion(play: "k",
+                words: "Check. You are a shade ahead, but not far enough that a bet would be called by anything worse.",
+                firm: true)
     }
     if canRaise && callsTooMuch(style) {
-        return Suggestion(move: "k", firm: true,
-            words: "Check. A bet here would be a bluff, and a bluff against something that calls this much is just money handed over.")
+        return Suggestion(play: "k",
+                words: "Check. A bet here would be a bluff, and a bluff against something that calls this much is just money handed over.",
+                firm: true)
     }
     if canRaise && style.bluffPercent >= 20 {
         // A spot with two right answers, and the summary should not pretend
         // otherwise by scoring one of them.
-        return Suggestion(move: "k", firm: false,
-            words: "Check — or bluff, if you fancy it. This one folds when the price is wrong, which is the only thing that ever makes a bluff work.")
+        return Suggestion(play: "k",
+                words: "Check — or bluff, if you fancy it. This one folds when the price is wrong, which is the only thing that ever makes a bluff work.",
+                firm: false)
     }
-    return Suggestion(move: "k", firm: true,
-        words: "Check, and be glad it's free. This hand does not want to build a pot.")
+    return Suggestion(play: "k",
+                words: "Check, and be glad it's free. This hand does not want to build a pot.",
+                firm: true)
 }
 
 // A bot whose call margin is below zero pays past the price it is offered,
