@@ -1,0 +1,1020 @@
+// blackjack.lux — blackjack against a dealer, with a tutor that works the
+// answer out exactly rather than looking it up.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// Every piece of blackjack advice you have ever seen came off a chart. The
+// chart is right, but it is a table of answers with the reasoning thrown away,
+// and it cannot tell you that hitting sixteen against a ten is not good — only
+// that it is less bad than standing, and by how little. This program has no
+// chart. Before each of your turns it works out what standing is worth, what
+// hitting is worth and what doubling is worth, in chips, and shows you all
+// three. The advice is whichever number is largest, and the reason is that it
+// is largest.
+//
+// It is worth saying how this differs from poker.lux, which sits next to it in
+// this folder and answers the same kind of question in the opposite way. Poker
+// simulates: it deals the rest of the hand out a thousand times because the
+// space of ways a hand can finish is far too large to walk through. Blackjack
+// is small enough to walk through. There are only twenty-odd totals you can be
+// standing on and only ten cards that can come next, so the whole tree can be
+// worked out exactly, and an exact answer is better than a sampled one when you
+// can have it. Two programs, two techniques, and which one is right is decided
+// by the size of the problem rather than by taste.
+//
+// The arithmetic is a table built from the bottom up. A total of twenty-one is
+// easy: you stand, and what that is worth depends only on the dealer. Twenty is
+// easy once twenty-one is known. Sixteen is easy once everything above sixteen
+// is known, because every card you can draw takes you somewhere higher. Work
+// downward and every answer rests on answers already worked out — which is the
+// same trick as the dealer's own table, built the same way just above it.
+//
+// One honest simplification. The probabilities come from what is genuinely left
+// in the shoe, so they shift as the shoe wears down, but the tree treats each
+// draw as independent rather than tracking the deck through every branch of
+// itself. Over six decks the difference is far smaller than the third decimal
+// place, and carrying it would cost a hundred times the work.
+//
+//   lux run blackjack.lux
+//
+// Six decks, dealer stands on all seventeen, blackjack pays three to two.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same cards every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- cards ----------
+
+// Cards are 0..51 as everywhere else here: rank is card / 4, running 0 for a
+// deuce to 12 for an ace, and suit is card % 4.
+
+func rankLabel(r: int) -> string {
+    return match r {
+        0  => "2"
+        1  => "3"
+        2  => "4"
+        3  => "5"
+        4  => "6"
+        5  => "7"
+        6  => "8"
+        7  => "9"
+        8  => "T"
+        9  => "J"
+        10 => "Q"
+        11 => "K"
+        _  => "A"
+    }
+}
+
+func suitLabel(s: int) -> string {
+    return match s {
+        0 => "♠"
+        1 => "♥"
+        2 => "♦"
+        _ => "♣"
+    }
+}
+
+func cardLabel(dealt: int) -> string {
+    return rankLabel(dealt / 4) + suitLabel(dealt % 4)
+}
+
+func handLabel(cards: [int]) -> string {
+    var shown = ""
+    for dealt in cards {
+        shown += cardLabel(dealt) + " "
+    }
+    return shown
+}
+
+// Blackjack cannot tell a jack from a king, so thirteen ranks collapse into ten
+// things a card can be: the numbers two through nine, a ten, and an ace. Every
+// count and every probability in this program is kept in that shape.
+func categoryOf(dealt: int) -> int {
+    let r = dealt / 4
+    if r < 8 {
+        return r
+    }
+    if r < 12 {
+        return 8
+    }
+    return 9
+}
+
+func valueOf(cat: int) -> int {
+    if cat < 8 {
+        return cat + 2
+    }
+    if cat == 8 {
+        return 10
+    }
+    return 11
+}
+
+// ---------- what a hand is worth ----------
+
+// A hand is soft when one of its aces is still being counted as eleven, which
+// is worth knowing because a soft hand cannot bust on the next card. Aces come
+// in at eleven and are demoted one at a time only when they have to be.
+struct Total {
+    count: int
+    soft: bool
+}
+
+func totalOf(cards: [int]) -> Total {
+    var sum = 0
+    var high = 0
+    for dealt in cards {
+        let cat = categoryOf(dealt)
+        sum += valueOf(cat)
+        if cat == 9 {
+            high += 1
+        }
+    }
+    var over = sum > 21 && high > 0
+    while over {
+        sum -= 10
+        high -= 1
+        over = sum > 21 && high > 0
+    }
+    return Total(count: sum, soft: high > 0)
+}
+
+func twoCard(a: int, b: int) -> Total {
+    var sum = valueOf(a) + valueOf(b)
+    if sum > 21 {
+        // Two aces, and one of them has to come down.
+        sum -= 10
+    }
+    return Total(count: sum, soft: a == 9 || b == 9)
+}
+
+// ---------- the shoe ----------
+
+// Six decks, and the shoe is not shuffled between hands. That is the whole
+// reason the tutor's numbers move as you play: what is left to come genuinely
+// changes, and the arithmetic is done against what is left rather than against
+// a fresh deck.
+
+func decks() -> int {
+    return 6
+}
+
+func freshShoe() -> [int] {
+    var shoe: [int]
+    for d in 0..decks() {
+        for c in 0..52 {
+            shoe += c
+        }
+    }
+    return shoe
+}
+
+// What has not been seen yet, by category. Tens are four ranks and so four
+// times as common, which is the single most important fact about the game.
+func freshCounts() -> [int] {
+    var left: [int]
+    for cat in 0..10 {
+        if cat == 8 {
+            left += 16 * decks()
+        } else {
+            left += 4 * decks()
+        }
+    }
+    return left
+}
+
+// A card counts as gone the moment you can see it, and not before. The dealer's
+// hole card is face down, so it stays in here until it is turned over — the
+// tutor is allowed to know exactly what you know and nothing else.
+func seen(left: [int], dealt: int) -> [int] {
+    var counted = left
+    counted[categoryOf(dealt)] -= 1
+    return counted
+}
+
+func remaining(left: [int]) -> int {
+    var total = 0
+    for n in left {
+        total += n
+    }
+    return total
+}
+
+// The unseen shoe as ten probabilities.
+func chancesOf(left: [int]) -> [float] {
+    let total = remaining(left)
+    var p: [float]
+    for n in left {
+        p += float(n) / float(total)
+    }
+    return p
+}
+
+struct Shuffled {
+    cards: [int]
+    rng: Random
+}
+
+func shuffled(cards: [int], r: Random) -> Shuffled {
+    var deck = cards
+    var rng = r
+    for slot in 0..length(deck) {
+        rng = next(rng)
+        let pick = slot + below(rng, length(deck) - slot)
+        let held = deck[slot]
+        deck[slot] = deck[pick]
+        deck[pick] = held
+    }
+    return Shuffled(cards: deck, rng: rng)
+}
+
+// ---------- the dealer's table ----------
+//
+// Six numbers describe everything the dealer can finish with: seventeen,
+// eighteen, nineteen, twenty, twenty-one, or bust. The table below holds those
+// six for every total the dealer might be standing on, and it is built from the
+// top down because a total only ever moves upward. Seventeen and above are
+// settled — the dealer stands and that is the answer. Sixteen is a mixture of
+// the rows above it, weighted by how likely each card is. Then fifteen, and so
+// on down.
+
+// Rows are indexed by total, and a hard twenty-one drawing a ten reaches for
+// row thirty-one, so the table is longer than the game is. Everything past
+// twenty-one is the same row: bust.
+func tableSize() -> int {
+    return 33
+}
+
+func bustRow() -> [float] {
+    return [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+}
+
+func standingRow(total: int) -> [float] {
+    var row = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    row[total - 17] = 1.0
+    return row
+}
+
+struct Dealer {
+    hard: [[float]]
+    soft: [[float]]
+}
+
+// Where a total lands after one more card. Written once and used by the
+// dealer's table, the player's table and the doubling arithmetic, because all
+// three ask the same question and any difference between them would be a bug.
+func afterDraw(t: int, isSoft: bool, cat: int) -> Total {
+    if isSoft {
+        var v = valueOf(cat)
+        if cat == 9 {
+            // A second ace joins as a one; the first is already the eleven.
+            v = 1
+        }
+        let sum = t + v
+        if sum <= 21 {
+            return Total(count: sum, soft: true)
+        }
+        // The eleven comes down and the hand hardens.
+        return Total(count: sum - 10, soft: false)
+    }
+    if cat == 9 {
+        if t + 11 <= 21 {
+            return Total(count: t + 11, soft: true)
+        }
+        return Total(count: t + 1, soft: false)
+    }
+    return Total(count: t + valueOf(cat), soft: false)
+}
+
+func rowAfter(t: int, isSoft: bool, cat: int, hard: [[float]], soft: [[float]]) -> [float] {
+    let landed = afterDraw(t, isSoft, cat)
+    if landed.count >= tableSize() {
+        return bustRow()
+    }
+    if landed.soft {
+        return soft[landed.count]
+    }
+    return hard[landed.count]
+}
+
+// One row as the weighted mixture of the rows it can reach.
+func mixedRow(t: int, isSoft: bool, hard: [[float]], soft: [[float]], p: [float]) -> [float] {
+    var out = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    for cat in 0..10 {
+        if p[cat] > 0.0 {
+            let row = rowAfter(t, isSoft, cat, hard, soft)
+            for b in 0..6 {
+                out[b] += p[cat] * row[b]
+            }
+        }
+    }
+    return out
+}
+
+// The order matters and it is not arbitrary. Hard totals of eleven and up never
+// reach a soft total, so they can be settled first. Soft totals fall back to
+// hard totals of twelve and up, all of which are then known. And hard totals of
+// ten and under can reach a soft total, so they come last. Three passes, no
+// circles, no recursion.
+func dealerTables(p: [float]) -> Dealer {
+    var hard: [[float]]
+    var soft: [[float]]
+    for t in 0..tableSize() {
+        hard += bustRow()
+        soft += bustRow()
+    }
+
+    for step in 0..11 {
+        let t = 21 - step
+        if t >= 17 {
+            hard[t] = standingRow(t)
+        } else {
+            hard[t] = mixedRow(t, false, hard, soft, p)
+        }
+    }
+    for step in 0..10 {
+        let t = 21 - step
+        if t >= 17 {
+            soft[t] = standingRow(t)
+        } else {
+            soft[t] = mixedRow(t, true, hard, soft, p)
+        }
+    }
+    for step in 0..9 {
+        let t = 10 - step
+        hard[t] = mixedRow(t, false, hard, soft, p)
+    }
+
+    return Dealer(hard: hard, soft: soft)
+}
+
+// A blackjack would already have ended the hand, so by the time you are being
+// asked anything the dealer's hole card is known not to be the one that makes
+// one. That has to be taken out of the arithmetic, or every number here is
+// quietly wrong in the dealer's favour.
+func makesBlackjack(up: int, hole: int) -> bool {
+    return (up == 9 && hole == 8) || (up == 8 && hole == 9)
+}
+
+func dealerChances(up: int, d: Dealer, p: [float]) -> [float] {
+    let upCat = categoryOf(up)
+    var mass = 0.0
+    for cat in 0..10 {
+        if !makesBlackjack(upCat, cat) {
+            mass += p[cat]
+        }
+    }
+    var out = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    for cat in 0..10 {
+        if p[cat] > 0.0 && !makesBlackjack(upCat, cat) {
+            let start = twoCard(upCat, cat)
+            var row = d.hard[start.count]
+            if start.soft {
+                row = d.soft[start.count]
+            }
+            let weight = p[cat] / mass
+            for b in 0..6 {
+                out[b] += weight * row[b]
+            }
+        }
+    }
+    return out
+}
+
+// ---------- what each move is worth ----------
+//
+// All three answers are in chips per chip staked. Standing on twenty is worth
+// about seventy hundredths: bet ten and you expect seven back on top. Standing
+// on sixteen against a ten is worth about minus fifty-four, and hitting it is
+// worth about minus fifty-one, which is the whole of why you hit.
+
+func standValue(total: int, dealer: [float]) -> float {
+    if total > 21 {
+        return -1.0
+    }
+    var ev = dealer[5]
+    for b in 0..5 {
+        let dealerTotal = 17 + b
+        if total > dealerTotal {
+            ev += dealer[b]
+        } else if total < dealerTotal {
+            ev -= dealer[b]
+        }
+    }
+    return ev
+}
+
+func higher(a: float, b: float) -> float {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+struct Player {
+    hardStand: [float]
+    hardHit: [float]
+    hardBest: [float]
+    softStand: [float]
+    softHit: [float]
+    softBest: [float]
+}
+
+func bestAfter(t: int, isSoft: bool, cat: int, hardBest: [float], softBest: [float]) -> float {
+    let landed = afterDraw(t, isSoft, cat)
+    if landed.count > 21 {
+        return -1.0
+    }
+    if landed.soft {
+        return softBest[landed.count]
+    }
+    return hardBest[landed.count]
+}
+
+func hitValue(t: int, isSoft: bool, hardBest: [float], softBest: [float], p: [float]) -> float {
+    var ev = 0.0
+    for cat in 0..10 {
+        if p[cat] > 0.0 {
+            ev += p[cat] * bestAfter(t, isSoft, cat, hardBest, softBest)
+        }
+    }
+    return ev
+}
+
+// Built downward in the same three passes and for the same reason. The only
+// difference from the dealer's table is that the player has a choice at every
+// total, so each row keeps the better of standing and hitting — and it is that
+// better number the row above it is allowed to assume.
+func playerTables(dealer: [float], p: [float]) -> Player {
+    var hardStand: [float]
+    var hardHit: [float]
+    var hardBest: [float]
+    var softStand: [float]
+    var softHit: [float]
+    var softBest: [float]
+    for t in 0..tableSize() {
+        hardStand += -1.0
+        hardHit += -1.0
+        hardBest += -1.0
+        softStand += -1.0
+        softHit += -1.0
+        softBest += -1.0
+    }
+
+    for step in 0..11 {
+        let t = 21 - step
+        hardStand[t] = standValue(t, dealer)
+        hardHit[t] = hitValue(t, false, hardBest, softBest, p)
+        hardBest[t] = higher(hardStand[t], hardHit[t])
+    }
+    for step in 0..10 {
+        let t = 21 - step
+        softStand[t] = standValue(t, dealer)
+        softHit[t] = hitValue(t, true, hardBest, softBest, p)
+        softBest[t] = higher(softStand[t], softHit[t])
+    }
+    for step in 0..9 {
+        let t = 10 - step
+        hardStand[t] = standValue(t, dealer)
+        hardHit[t] = hitValue(t, false, hardBest, softBest, p)
+        hardBest[t] = higher(hardStand[t], hardHit[t])
+    }
+
+    return Player(hardStand: hardStand, hardHit: hardHit, hardBest: hardBest,
+                  softStand: softStand, softHit: softHit, softBest: softBest)
+}
+
+// Doubling buys exactly one card and then stops, so it cannot use the player's
+// table at all — that table assumes you may keep going. Twice the value of one
+// card and a forced stand.
+func doubleValue(t: int, isSoft: bool, dealer: [float], p: [float]) -> float {
+    var ev = 0.0
+    for cat in 0..10 {
+        if p[cat] > 0.0 {
+            let landed = afterDraw(t, isSoft, cat)
+            ev += p[cat] * standValue(landed.count, dealer)
+        }
+    }
+    return 2.0 * ev
+}
+
+// ---------- the tutor ----------
+
+// The move and the words for it come out of one function, so that the sentence
+// you read and the answer you are scored against cannot drift apart.
+//
+// The field is `play` rather than `move` for a duller reason: a field named
+// `move` produces Rust that will not compile, which is lux issue 77.
+struct Call {
+    play: string
+    words: string
+    firm: bool
+}
+
+func chips(ev: float, bet: int) -> string {
+    let hundredths = int(ev * float(bet) * 100.0)
+    return money(hundredths)
+}
+
+// Chips to two places, without a formatter. Integer division throws the
+// remainder away, so the sign has to be put back by hand and the pennies padded
+// by hand, which is the sort of thing a language with no printf makes you learn.
+func money(hundredths: int) -> string {
+    var whole = hundredths / 100
+    var part = hundredths % 100
+    var sign = ""
+    if hundredths < 0 {
+        sign = "−"
+        whole = -whole
+        part = -part
+    }
+    var padded = string(part)
+    if part < 10 {
+        padded = "0" + string(part)
+    }
+    return sign + string(whole) + "." + padded
+}
+
+func best3(a: float, b: float, c: float) -> float {
+    return higher(a, higher(b, c))
+}
+
+func advise(standNow: float, hitNow: float, doubleNow: float, canDouble: bool, bet: int) -> Call {
+    var top = higher(standNow, hitNow)
+    if canDouble {
+        top = best3(standNow, hitNow, doubleNow)
+    }
+
+    // Within a hundredth of a chip either way the choice is not worth marking,
+    // and saying so is more honest than pretending the third decimal place is
+    // advice.
+    let close = 0.01
+
+    if canDouble && doubleNow == top {
+        return Call(play: "d",
+            words: "Double. Two chips on this hand are worth " + chips(doubleNow, bet)
+                 + ", against " + chips(hitNow, bet) + " for hitting it one card at a time.",
+            firm: doubleNow - higher(standNow, hitNow) > close)
+    }
+    if standNow == top {
+        if standNow > 0.0 {
+            return Call(play: "s",
+                words: "Stand. This hand is worth " + chips(standNow, bet)
+                     + " as it is, and drawing to it brings it down to " + chips(hitNow, bet) + ".",
+                firm: standNow - hitNow > close)
+        }
+        return Call(play: "s",
+            words: "Stand, and not happily. Standing loses " + chips(standNow, bet)
+                 + " on average and hitting loses " + chips(hitNow, bet)
+                 + ". There is no good answer here, only a less bad one.",
+            firm: standNow - hitNow > close)
+    }
+    if hitNow > 0.0 {
+        return Call(play: "h",
+            words: "Hit. Drawing is worth " + chips(hitNow, bet)
+                 + " and standing only " + chips(standNow, bet) + ".",
+            firm: hitNow - standNow > close)
+    }
+    return Call(play: "h",
+        words: "Hit, because standing is worse. Hitting loses " + chips(hitNow, bet)
+             + " and standing loses " + chips(standNow, bet)
+             + " — you are not playing to win this one, you are playing to lose it less often.",
+        firm: hitNow - standNow > close)
+}
+
+// ---------- insurance ----------
+
+// The only side bet the game offers, and the only decision in blackjack that
+// counting the shoe can flip. It pays two to one on the hole card being a ten,
+// so it is worth taking exactly when tens are more than a third of what is
+// left. In a fresh six-deck shoe they are 96 of 312, which is under a third,
+// which is why the answer is almost always no — but almost is not always, and
+// the program will tell you when it changes.
+func insuranceNote(left: [int], bet: int) -> string {
+    let tens = left[8]
+    let total = remaining(left)
+    let percent = tens * 100 / total
+    let ev = 3.0 * float(tens) / float(total) - 1.0
+    var verdict = "so it is a bad bet, as it nearly always is."
+    if ev > 0.0 {
+        verdict = "so for once it is a good bet — this is the one decision in the game that counting can turn around."
+    }
+    return "Insurance pays 2 to 1 and needs the hole card to be a ten, which takes more than a third of the shoe. Tens are "
+         + string(percent) + "% of what is left, worth " + chips(ev, bet / 2) + " on a "
+         + string(bet / 2) + "-chip side bet, " + verdict
+}
+
+// ---------- what the player can see ----------
+
+func shoeNote(left: [int]) -> string {
+    let total = remaining(left)
+    return "Unseen: " + string(total) + " cards, " + string(left[8] * 100 / total)
+         + "% of them tens and " + string(left[9] * 100 / total) + "% aces."
+}
+
+func countNote(left: [int]) -> string {
+    let total = remaining(left)
+    let tenth = left[8] * 1000 / total
+    if tenth > 320 {
+        return "That is a shoe rich in tens, which favours you: more twenty-somethings for both of you, but only one of you has to stand on sixteen."
+    }
+    if tenth < 290 {
+        return "That is a shoe short of tens, which favours the dealer — a dealer drawing to sixteen busts less often when the small cards are still to come."
+    }
+    return "That is about what a fresh shoe looks like."
+}
+
+func firstLetter(typed: string) -> string {
+    let plain = replace(replace(typed, " ", ""), "\n", "")
+    if plain == "" {
+        return "q"
+    }
+    if plain == "?" || plain == "shoe" {
+        return "?"
+    }
+    for choice in ["h", "s", "d", "q"] {
+        if plain == choice || plain == upperOf(choice) {
+            return choice
+        }
+    }
+    return ""
+}
+
+func upperOf(letter: string) -> string {
+    return match letter {
+        "h" => "H"
+        "s" => "S"
+        "d" => "D"
+        _   => "Q"
+    }
+}
+
+func yes(typed: string) -> bool {
+    let plain = replace(replace(typed, " ", ""), "\n", "")
+    return plain == "y" || plain == "Y" || plain == "yes"
+}
+
+func promptFor(canDouble: bool) -> string {
+    if canDouble {
+        return "h/s/d/q/?"
+    }
+    return "h/s/q/?"
+}
+
+func refusal(canDouble: bool) -> string {
+    if canDouble {
+        return "One of hit, stand, double, or quit."
+    }
+    return "Doubling is only open on your first two cards. Hit, stand, or quit."
+}
+
+func totalLabel(t: Total) -> string {
+    if t.soft {
+        return "soft " + string(t.count)
+    }
+    return string(t.count)
+}
+
+// ---------- the game ----------
+
+print("Blackjack. Six decks, dealer stands on all 17s, blackjack pays 3 to 2.")
+print("You bet 10 a hand and start with 200.")
+print("Type h to hit, s to stand, d to double, q to leave, ? to see what is left in the shoe.")
+print("")
+
+var rng = fromClock()
+let opening = shuffled(freshShoe(), rng)
+var shoe = opening.cards
+rng = opening.rng
+var left = freshCounts()
+var nextCard = 0
+
+var chipsHeld = 200
+let bet = 10
+var handsPlayed = 0
+var playing = true
+
+// Every decision, against the arithmetic that was on the screen when you made
+// it. The cost is exact here in a way poker's could not be: the difference
+// between the best move and the one you played is a number, not an estimate.
+var decisions = 0
+var agreed = 0
+var lostToChoices = 0.0
+var stoodShort = 0
+var hitTooFar = 0
+var missedDoubles = 0
+
+while playing && chipsHeld >= bet {
+    // Shuffling with a quarter of the shoe still to come is what a casino does,
+    // and it is done here for the same reason: the end of a shoe is where the
+    // arithmetic gets interesting, so there has to be some of it left.
+    if nextCard > length(shoe) - 60 {
+        let again = shuffled(freshShoe(), rng)
+        shoe = again.cards
+        rng = again.rng
+        left = freshCounts()
+        nextCard = 0
+        print("── shuffle ─────────────────────────────")
+        print("")
+    }
+
+    handsPlayed += 1
+    var yourCards: [int]
+    var dealerCards: [int]
+    yourCards += shoe[nextCard]
+    dealerCards += shoe[nextCard + 1]
+    yourCards += shoe[nextCard + 2]
+    dealerCards += shoe[nextCard + 3]
+    nextCard += 4
+
+    // Three of those four are face up. The hole card is not, so it is not
+    // counted as seen until it is turned over.
+    left = seen(left, yourCards[0])
+    left = seen(left, yourCards[1])
+    left = seen(left, dealerCards[0])
+
+    let up = dealerCards[0]
+    var staked = bet
+    var insured = false
+    var handOver = false
+
+    print("── hand " + string(handsPlayed) + " ─────────────────────────────")
+    print("Dealer shows " + cardLabel(up))
+    print("You have " + handLabel(yourCards) + "— " + totalLabel(totalOf(yourCards)))
+
+    if categoryOf(up) == 9 {
+        print("")
+        print("  " + insuranceNote(left, bet))
+        let answer = input("  insurance? y/n: ")
+        if yes(answer) {
+            insured = true
+            chipsHeld -= bet / 2
+            print("  You take insurance for " + string(bet / 2) + ".")
+        }
+    }
+
+    // The dealer looks at the hole card whenever it could make twenty-one, and
+    // the hand is over on the spot if it does.
+    let dealerHasBlackjack = totalOf(dealerCards).count == 21
+    let youHaveBlackjack = totalOf(yourCards).count == 21
+
+    if categoryOf(up) == 9 || categoryOf(up) == 8 {
+        if dealerHasBlackjack {
+            left = seen(left, dealerCards[1])
+            print("")
+            print("  Dealer has blackjack: " + handLabel(dealerCards))
+            if insured {
+                // Two to one on the side bet, and the side bet itself back.
+                // Taking it against a dealer blackjack is exactly break-even
+                // on the hand, which is the whole of its appeal.
+                chipsHeld += bet + bet / 2
+                print("  Insurance pays " + string(bet) + ", and your "
+                    + string(bet / 2) + " back.")
+            }
+            if youHaveBlackjack {
+                print("  So do you. Push.")
+            } else {
+                chipsHeld -= bet
+                print("  You lose " + string(bet) + ".")
+            }
+            handOver = true
+        } else if insured {
+            print("  No blackjack, so the insurance is gone.")
+        }
+    }
+
+    if !handOver && youHaveBlackjack {
+        left = seen(left, dealerCards[1])
+        let paid = bet * 3 / 2
+        chipsHeld += paid
+        print("")
+        print("  Blackjack. Paid " + string(paid) + " at three to two.")
+        handOver = true
+    }
+
+    var yourTotal = totalOf(yourCards)
+    var busted = false
+
+    while !handOver && !busted && playing {
+        let p = chancesOf(left)
+        let d = dealerTables(p)
+        let dealer = dealerChances(up, d, p)
+        let pl = playerTables(dealer, p)
+
+        var standNow = pl.hardStand[yourTotal.count]
+        var hitNow = pl.hardHit[yourTotal.count]
+        if yourTotal.soft {
+            standNow = pl.softStand[yourTotal.count]
+            hitNow = pl.softHit[yourTotal.count]
+        }
+        let canDouble = length(yourCards) == 2 && chipsHeld >= staked + bet
+        var doubleNow = -2.0
+        if canDouble {
+            doubleNow = doubleValue(yourTotal.count, yourTotal.soft, dealer, p)
+        }
+
+        let tip = advise(standNow, hitNow, doubleNow, canDouble, staked)
+
+        print("")
+        print("  You hold " + handLabel(yourCards) + "— " + totalLabel(yourTotal)
+            + " · chips " + string(chipsHeld))
+        var line = "  stand " + chips(standNow, staked) + " · hit " + chips(hitNow, staked)
+        if canDouble {
+            line += " · double " + chips(doubleNow, staked)
+        }
+        print(line)
+        print("  " + tip.words)
+
+        // What is on the table as this decision is made. Doubling moves the
+        // stake, and the cost of a decision has to be measured against what it
+        // was being made about rather than what it turned into.
+        let atStake = staked
+        var decided = false
+        var youDid = ""
+        while !decided {
+            let typed = firstLetter(input("  " + promptFor(canDouble) + ": "))
+            if typed == "q" {
+                playing = false
+                decided = true
+            } else if typed == "?" {
+                print("  " + shoeNote(left))
+                print("  " + countNote(left))
+            } else if typed == "s" {
+                youDid = "s"
+                decided = true
+                handOver = true
+                print("  You stand on " + totalLabel(yourTotal) + ".")
+            } else if typed == "h" {
+                youDid = "h"
+                decided = true
+                let drawn = shoe[nextCard]
+                nextCard += 1
+                left = seen(left, drawn)
+                yourCards += drawn
+                yourTotal = totalOf(yourCards)
+                print("  You draw " + cardLabel(drawn) + " — " + totalLabel(yourTotal) + ".")
+                if yourTotal.count > 21 {
+                    busted = true
+                }
+            } else if typed == "d" && canDouble {
+                youDid = "d"
+                decided = true
+                chipsHeld -= bet
+                staked += bet
+                let drawn = shoe[nextCard]
+                nextCard += 1
+                left = seen(left, drawn)
+                yourCards += drawn
+                yourTotal = totalOf(yourCards)
+                print("  You double to " + string(staked) + " and draw " + cardLabel(drawn)
+                    + " — " + totalLabel(yourTotal) + ".")
+                if yourTotal.count > 21 {
+                    busted = true
+                } else {
+                    handOver = true
+                }
+            } else {
+                print("  " + refusal(canDouble))
+            }
+        }
+
+        if youDid != "" {
+            decisions += 1
+            if youDid == tip.play {
+                agreed += 1
+            } else if tip.firm {
+                var chosen = standNow
+                if youDid == "h" {
+                    chosen = hitNow
+                }
+                if youDid == "d" {
+                    chosen = doubleNow
+                }
+                var top = higher(standNow, hitNow)
+                if canDouble {
+                    top = best3(standNow, hitNow, doubleNow)
+                }
+                lostToChoices += (top - chosen) * float(atStake)
+                if youDid == "s" {
+                    stoodShort += 1
+                } else if youDid == "h" && tip.play == "s" {
+                    hitTooFar += 1
+                } else if tip.play == "d" {
+                    missedDoubles += 1
+                }
+            }
+        }
+    }
+
+    if playing && !handOver && busted {
+        chipsHeld -= staked
+        print("  Bust. You lose " + string(staked) + ".")
+        left = seen(left, dealerCards[1])
+    }
+
+    // The dealer only plays when there is something left to play for.
+    if playing && !busted && !youHaveBlackjack && !dealerHasBlackjack {
+        left = seen(left, dealerCards[1])
+        var dealerTotal = totalOf(dealerCards)
+        print("")
+        print("  Dealer turns over " + handLabel(dealerCards) + "— " + totalLabel(dealerTotal))
+        var drawing = dealerTotal.count < 17
+        while drawing {
+            let drawn = shoe[nextCard]
+            nextCard += 1
+            left = seen(left, drawn)
+            dealerCards += drawn
+            dealerTotal = totalOf(dealerCards)
+            print("  Dealer draws " + cardLabel(drawn) + " — " + totalLabel(dealerTotal))
+            drawing = dealerTotal.count < 17
+        }
+
+        if dealerTotal.count > 21 {
+            chipsHeld += staked
+            print("  Dealer busts. You win " + string(staked) + ".")
+        } else if dealerTotal.count > yourTotal.count {
+            chipsHeld -= staked
+            print("  Dealer's " + string(dealerTotal.count) + " beats your "
+                + string(yourTotal.count) + ". You lose " + string(staked) + ".")
+        } else if dealerTotal.count < yourTotal.count {
+            chipsHeld += staked
+            print("  Your " + string(yourTotal.count) + " beats the dealer's "
+                + string(dealerTotal.count) + ". You win " + string(staked) + ".")
+        } else {
+            print("  Both on " + string(yourTotal.count) + ". Push.")
+        }
+    }
+
+    print("")
+    print("  chips " + string(chipsHeld))
+    print("")
+}
+
+print("")
+if chipsHeld < bet {
+    print("You are out of chips after " + string(handsPlayed) + " hands.")
+} else {
+    print("You leave after " + string(handsPlayed) + " hands with " + string(chipsHeld)
+        + " of the 200 you sat down with.")
+}
+
+if decisions > 0 {
+    print("")
+    print("── how you played ──────────────────────")
+    print("You made " + string(decisions) + " decisions, and " + string(agreed)
+        + " of them matched the arithmetic.")
+    print("")
+    print("The ones that did not cost you " + money(int(lostToChoices * 100.0))
+        + " chips in expectation. That is not what you actually lost — the cards decide that — but it is what the choices themselves were worth, and it is the only part of the evening that was yours.")
+
+    if stoodShort > 0 {
+        print("")
+        print("You stood " + string(stoodShort) + " times on a hand that wanted another card. Standing feels safe because busting is the loss you can see, but the dealer draws to seventeen whatever you do, and a hand that cannot beat seventeen has already lost.")
+    }
+    if hitTooFar > 0 {
+        print("")
+        print("You drew " + string(hitTooFar) + " times to a hand that was better left alone.")
+    }
+    if missedDoubles > 0 {
+        print("")
+        print("You passed up " + string(missedDoubles) + " doubles. It is the one moment the game lets you put more money in when you are ahead of it, and declining costs more than it looks.")
+    }
+    if stoodShort == 0 && hitTooFar == 0 && missedDoubles == 0 {
+        print("")
+        print("Nothing to correct — every decision was either the best one or too close to mark.")
+    }
+
+    print("")
+    print("None of which beats the house. Played perfectly this game loses about half a chip in every hundred staked, and no arrangement of these three moves makes that number positive. Knowing exactly what a decision costs is not the same as having a winning one.")
+}
