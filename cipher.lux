@@ -1,0 +1,406 @@
+// cipher.lux — two old ciphers, and breaking one of them without the key.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run cipher.lux                          check itself against the textbook
+//   lux run cipher.lux shift 3 attack at dawn
+//   lux run cipher.lux unshift 3 dwwdfn dw gdzq
+//   lux run cipher.lux key lemon attack at dawn
+//   lux run cipher.lux unkey lemon lxfopv ef rnhr
+//   lux run cipher.lux break wkh vhfuhw lv rxw
+//
+// The shift cipher is the oldest one worth the name: move every letter along
+// the alphabet by the same amount. Caesar used three. It has twenty-five keys,
+// so anybody willing to try all of them has already broken it, and `break` does
+// exactly that — except that it does not need you to read twenty-five lines of
+// nonsense to find the English one, because it can tell which is English by
+// counting.
+//
+// That is the part worth staying for. English letters do not turn up equally
+// often: e is about one letter in eight, t one in eleven, and z one in fourteen
+// hundred. Shift the text and the letters keep their shape but change their
+// names, so the tallest bar moves along the alphabet with them. Line the
+// counts up against what English usually looks like, take the shift that fits
+// best, and the cipher is open. No cleverness, no guessing at words, just
+// arithmetic on a tally.
+//
+// The other cipher here is Vigenère, which is the same idea run with a keyword
+// so that the shift changes from letter to letter. For three hundred years it
+// was called *le chiffre indéchiffrable*, and the reason it earned that is
+// exactly the reason `break` gives up on it: with a five-letter key, every fifth
+// letter is shifted the same way and the other four are not, so the tally comes
+// out flat and there is no tallest bar to line up. Counting stops telling you
+// anything. Run `break` on something enciphered with a key and watch it say so.
+//
+// ---------- a note on how this is possible at all ----------
+//
+// lux will not hand you one character out of a string. There is no text[3], and
+// `split` refuses an empty separator, so the usual way of walking a string is
+// closed. Shifting every letter by the same amount survives that — morse.lux and
+// runes.lux both work by replacing every occurrence of each letter across the
+// whole text — but a keyword cipher does not, because the same letter needs a
+// different shift depending on where it sits.
+//
+// It turns out `split` gives the positions back anyway. Splitting on "a" leaves
+// the pieces between the a's, and the length of each piece says how far it is to
+// the next one: the first a sits at the length of the first piece, the second at
+// that plus one plus the length of the second piece, and so on. Do that for
+// every character you care about and you have recovered, from a function that
+// hides positions, exactly where every character is.
+//
+// Thirty-odd passes over the text to learn what one subscript would have told
+// you. It is not efficient and it is not a workaround to be proud of, but it is
+// worth seeing, because the shape of it comes up again and again: a thing you
+// were not given can often be rebuilt out of the things you were.
+
+// ---------- the alphabet ----------
+
+func lettersUsed() -> int {
+    return 26
+}
+
+// The letters first, then everything the cipher leaves alone. The order matters:
+// anything at index 26 or beyond is passed through untouched, so adding a
+// punctuation mark to the end of this list is all it takes to support it.
+func marks() -> [string] {
+    return ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+            "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+            " ", ".", ",", "!", "?", "'", "-", ":", ";", "(", ")",
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+}
+
+func capitals() -> [string] {
+    return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+            "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
+}
+
+// Twenty-six passes, one per capital, because lux has no way to lower-case a
+// letter and no way to look at one.
+func lowered(text: string) -> string {
+    var working = text
+    let caps = capitals()
+    let small = marks()
+    for slot in 0..lettersUsed() {
+        working = replace(working, caps[slot], small[slot])
+    }
+    return working
+}
+
+// ---------- getting the characters back ----------
+
+// One number per position in the text: which mark is sitting there, or -1 for
+// something this program does not know about.
+//
+// The trick is described at the top. Splitting the text on a character leaves
+// the runs between its occurrences, and running lengths along those runs says
+// where each occurrence was. Every character is looked for separately, and
+// between them they fill in the whole string.
+func charsOf(text: string) -> [int] {
+    var found: [int]
+    for spot in 0..length(text) {
+        found += -1
+    }
+    let all = marks()
+    for slot in 0..length(all) {
+        let pieces = split(text, all[slot])
+        var at = 0
+        for piece in 0..length(pieces) - 1 {
+            at += length(pieces[piece])
+            found[at] = slot
+            at += 1
+        }
+    }
+    return found
+}
+
+func rendered(chars: [int]) -> string {
+    let all = marks()
+    var out = ""
+    for mark in chars {
+        if mark < 0 {
+            out += "?"
+        } else {
+            out += all[mark]
+        }
+    }
+    return out
+}
+
+func isLetter(mark: int) -> bool {
+    return mark >= 0 && mark < lettersUsed()
+}
+
+// ---------- the shift cipher ----------
+
+// Every letter moved along by the same amount, wrapping round at z. Adding
+// twenty-six before the remainder keeps a negative shift honest, since a
+// remainder in lux takes the sign of what went into it.
+func shifted(chars: [int], by: int) -> [int] {
+    var out = chars
+    for spot in 0..length(chars) {
+        if isLetter(chars[spot]) {
+            out[spot] = (chars[spot] + by % lettersUsed() + lettersUsed()) % lettersUsed()
+        }
+    }
+    return out
+}
+
+// ---------- the keyword cipher ----------
+
+// The same shift cipher with the amount changing from letter to letter, taken
+// in turn from the letters of the key. The key advances only on a letter, so
+// spaces and punctuation do not knock it out of step — which is what makes the
+// cipher survive being written with spaces in.
+func keyed(chars: [int], key: [int], forward: bool) -> [int] {
+    var out = chars
+    var at = 0
+    var lettersInKey = 0
+    for mark in key {
+        if isLetter(mark) {
+            lettersInKey += 1
+        }
+    }
+    if lettersInKey == 0 {
+        return out
+    }
+
+    for spot in 0..length(chars) {
+        if isLetter(chars[spot]) {
+            let step = keyLetterAt(key, at % lettersInKey)
+            var by = step
+            if !forward {
+                by = -step
+            }
+            out[spot] = (chars[spot] + by + lettersUsed()) % lettersUsed()
+            at += 1
+        }
+    }
+    return out
+}
+
+// The nth letter of the key, skipping anything in it that is not a letter.
+func keyLetterAt(key: [int], wanted: int) -> int {
+    var seen = 0
+    for mark in key {
+        if isLetter(mark) {
+            if seen == wanted {
+                return mark
+            }
+            seen += 1
+        }
+    }
+    return 0
+}
+
+// ---------- counting letters ----------
+
+func tallyOf(chars: [int]) -> [int] {
+    var counts: [int]
+    for letter in 0..lettersUsed() {
+        counts += 0
+    }
+    for mark in chars {
+        if isLetter(mark) {
+            counts[mark] += 1
+        }
+    }
+    return counts
+}
+
+func lettersIn(chars: [int]) -> int {
+    var total = 0
+    for mark in chars {
+        if isLetter(mark) {
+            total += 1
+        }
+    }
+    return total
+}
+
+// How often each letter turns up in English, per ten thousand. These are the
+// standard counts off a large body of text; the exact source matters less than
+// that e towers over everything and j, q, x and z barely register.
+func englishPerTenThousand() -> [float] {
+    return [816.7, 149.2, 278.2, 425.3, 1270.2, 222.8, 201.5, 609.4, 696.6,
+            15.3, 77.2, 402.5, 240.6, 674.9, 750.7, 192.9, 9.5, 598.7, 632.7,
+            905.6, 275.8, 97.8, 236.0, 15.0, 197.4, 7.4]
+}
+
+// How badly a tally fits English. Every letter contributes the square of how far
+// off it is, divided by how much was expected there — so being fifty out on a
+// letter that should appear once is enormous and being fifty out on e is
+// nothing. Squaring is what stops a shortfall in one place quietly cancelling a
+// surplus in another. Lower is a better fit, and zero would be a perfect one.
+func misfit(counts: [int], total: int) -> float {
+    if total == 0 {
+        return 0.0
+    }
+    let english = englishPerTenThousand()
+    var score = 0.0
+    for letter in 0..lettersUsed() {
+        let expected = float(total) * english[letter] / 10000.0
+        let off = float(counts[letter]) - expected
+        score += off * off / expected
+    }
+    return score
+}
+
+struct Reading {
+    by: int
+    misfit: float
+}
+
+// Every one of the twenty-six shifts, scored. The tally does not have to be
+// recomputed for each: shifting the text shifts the tally along with it, so the
+// counts are gathered once and then read from a different starting point
+// twenty-six times over.
+func readings(chars: [int]) -> [Reading] {
+    let counts = tallyOf(chars)
+    let total = lettersIn(chars)
+    var out: [Reading]
+    for by in 0..lettersUsed() {
+        var moved: [int]
+        for letter in 0..lettersUsed() {
+            moved += counts[(letter + by) % lettersUsed()]
+        }
+        out += Reading(by: by, misfit: misfit(moved, total))
+    }
+    return out
+}
+
+func bestReading(all: [Reading]) -> Reading {
+    var best = all[0]
+    for one in all {
+        if one.misfit < best.misfit {
+            best = one
+        }
+    }
+    return best
+}
+
+func runnerUp(all: [Reading], winner: int) -> Reading {
+    var best = all[0]
+    var started = false
+    for one in all {
+        if one.by != winner {
+            if !started || one.misfit < best.misfit {
+                best = one
+                started = true
+            }
+        }
+    }
+    return best
+}
+
+// ---------- putting arguments back together ----------
+
+func restOfLine(given: [string], from: int) -> string {
+    var joined = ""
+    for slot in from..length(given) {
+        if slot > from {
+            joined += " "
+        }
+        joined += given[slot]
+    }
+    return joined
+}
+
+func numberIn(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => 0
+    }
+}
+
+func oneDecimal(value: float) -> string {
+    let tenths = int(value * 10.0)
+    return string(tenths / 10) + "." + string(tenths % 10)
+}
+
+// ---------- the program ----------
+
+let given = args()
+var command = ""
+if length(given) > 1 {
+    command = given[1]
+}
+
+if command == "shift" || command == "unshift" {
+    var by = numberIn(given[2])
+    if command == "unshift" {
+        by = -by
+    }
+    print(rendered(shifted(charsOf(lowered(restOfLine(given, 3))), by)))
+
+} else if command == "key" || command == "unkey" {
+    let key = charsOf(lowered(given[2]))
+    print(rendered(keyed(charsOf(lowered(restOfLine(given, 3))), key, command == "key")))
+
+} else if command == "break" {
+    let chars = charsOf(lowered(restOfLine(given, 2)))
+    let all = readings(chars)
+    let winner = bestReading(all)
+    let second = runnerUp(all, winner.by)
+
+    print("")
+    print("  Shifted by " + string(winner.by) + ":")
+    print("    " + rendered(shifted(chars, -winner.by)))
+    print("")
+    print("  The tally fits English " + oneDecimal(winner.misfit)
+        + " against " + oneDecimal(second.misfit) + " for the next best shift ("
+        + string(second.by) + "), lower being closer.")
+
+    // A real shift cipher wins by a mile. Anything that does not is either too
+    // short to count or was never a shift cipher to begin with.
+    if second.misfit > winner.misfit * 2.0 && lettersIn(chars) >= 20 {
+        print("  That is not close, which is what a shift cipher looks like from the")
+        print("  outside: one shift turns the text into English and the other")
+        print("  twenty-five do not come near it.")
+    } else if lettersIn(chars) < 20 {
+        print("  Too little text to be sure of that. Counting letters needs letters to")
+        print("  count, and a handful of words can look like anything.")
+    } else {
+        print("  That is much too close to be an answer. No shift fits English better")
+        print("  than the others, which is what happens when the letters were not all")
+        print("  shifted the same way — a keyword cipher flattens the tally, and a flat")
+        print("  tally has nothing in it to line up. That is why Vigenère went three")
+        print("  hundred years without being broken.")
+    }
+    print("")
+
+} else {
+    // With nothing asked of it, the program checks itself against the two
+    // examples every textbook uses, which turns the code above from a claim into
+    // something you can watch agree with somebody else.
+    let caesarPlain = "attack at dawn"
+    let caesarWant = "dwwdfn dw gdzq"
+    let caesarGot = rendered(shifted(charsOf(caesarPlain), 3))
+
+    let keyPlain = "attackatdawn"
+    let keyWant = "lxfopvefrnhr"
+    let keyGot = rendered(keyed(charsOf(keyPlain), charsOf("lemon"), true))
+
+    print("")
+    print("  Caesar's own shift of three:")
+    print("    " + caesarPlain + "  ->  " + caesarGot)
+    if caesarGot == caesarWant {
+        print("    which is what it should be.")
+    } else {
+        print("    but it should have been " + caesarWant + ".")
+    }
+    print("")
+    print("  Vigenère with the key LEMON, the example in every account of it:")
+    print("    " + keyPlain + "  ->  " + keyGot)
+    if keyGot == keyWant {
+        print("    which is what it should be.")
+    } else {
+        print("    but it should have been " + keyWant + ".")
+    }
+    print("")
+    print("  And back again: " + rendered(keyed(charsOf(keyGot), charsOf("lemon"), false)))
+    print("")
+    print("  lux run cipher.lux shift 3 attack at dawn")
+    print("  lux run cipher.lux break wkh vhfuhw lv rxw")
+    print("")
+}
