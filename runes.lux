@@ -10,32 +10,45 @@
 // Transliteration, not translation: the runes on Thror's map spell ordinary
 // English, one mark at a time, which is why Bilbo's readers can decode them
 // with nothing but the chart on the compass rose. Tolkien did not invent the
-// letters. He used the Anglo-Saxon futhorc — the runic alphabet cut into stone
-// and bone in England for six hundred years — and wrote modern English in it.
+// letters. He took the Anglo-Saxon futhorc — cut into stone and bone in England
+// for six hundred years — and wrote modern English in it. In the foreword he
+// calls the result "English runes", and that is the mode this program follows.
 //
-// The letters here are the real Unicode runic block, U+16A0 upward, so this is
-// not a font trick: the characters are the characters, and they will paste into
+// The chart below is Per Lindberg's, from "Tolkien's English Runes" (Mellonath
+// Daeron, 2023), which reads the inscriptions in The Hobbit and tabulates what
+// Tolkien actually used. It is worth naming a source that precisely, because the
+// popular rune charts disagree with one another, and several of them are wrong
+// in exactly the places this program was wrong before it was checked against a
+// real one.
+//
+// The letters are the real Unicode runic block, U+16A0 upward, so this is not a
+// font trick: the characters are the characters, and they will paste into
 // anything that can show them.
 //
-// What is attested and what is convention, kept apart honestly: the dust jacket
-// of The Hobbit carries a full line of Tolkien's own runes, and the mapping for
-// TH E H O B I T R A N D G, the word separator, and the doubled ᚳᚳ for "ck"
-// all come from reading it. The rest — the digraph runes for EE, OO, EA, ST,
-// and calc for K — follow the futhorc's own values and the chart Tolkien
-// printed, and are marked below where they are a choice rather than a reading.
+// Tolkien's mode is orthographic — one rune per letter, whatever it sounds like
+// — with a handful of deliberate exceptions, and the exceptions are the whole
+// interest of the thing:
 //
-// The target is Tolkien's alphabet rather than the archaeologists', and the two
-// part company over letters modern English has and Old English did not need.
-// English wants a V distinct from F and a Z distinct from X; historical futhorc
-// inscriptions would write both pairs with one rune each and let context sort it
-// out. Since what is being written here is modern English, every letter gets its
-// own rune — ᚡ for V and ᛎ for Z, both of which the runic block carries — and
-// the round trip stays exact as a result. An epigrapher would object. Bilbo
-// would not, and the map in the front of the book is his.
+//   J is written with the same rune as I, and V with the same rune as U. Old
+//   English had no need to tell those pairs apart, and Tolkien did not add runes
+//   to make it.
 //
-// The same reasoning covers ᛟ for OO, whose value in Old English was /ø/, the
-// vowel in German schön, and nothing like the sound in moon. It is here because
-// it is the Hobbit chart's letter, which is the chart this program is for.
+//   Q is not a letter here at all. It is written CW, so QUEEN comes out CWEEN.
+//
+//   O and OO are both a single ᚩ, which is why the map says DOR for "door" —
+//   one rune, and the doubled letter simply goes away. (Where OO is pronounced
+//   [u], as in "soon", Tolkien had a separate rune. No mechanical transliterator
+//   can hear which is meant, so this one always writes ᚩ.)
+//
+//   Five letter-pairs get a rune of their own: TH, NG, EE, EA and ST.
+//
+//   A is phonemic — ac for [a], os for [o] as in "walk", aesc for [æ] as in
+//   "day". This program always writes ac, for the same reason.
+//
+// So reading back is not the mirror of writing, and cannot be: a J returns as an
+// I, a V as a U, DOOR as DOR, QUEEN as CWEEN. Every one of those is Tolkien's
+// own system doing what it does, and hiding it would mean inventing runes he
+// never used.
 
 // ---------- turning capitals into small letters ----------
 
@@ -56,43 +69,50 @@ func lowered(text: string, caps: [string], small: [string]) -> string {
     return working
 }
 
+// The two spellings that change before a single rune is chosen: a doubled O
+// collapses to one, and Q becomes CW. Both are one-way, which is why they live
+// here rather than in the chart — the chart has to read in both directions and
+// these cannot.
+func respelled(text: string) -> string {
+    return replace(replace(replace(text, "oo", "o"), "qu", "cw"), "q", "cw")
+}
+
 // ---------- the chart ----------
 //
 // Two arrays side by side, and their ORDER is part of the alphabet. Every
-// replacement runs over the whole text in turn, so a piece that contains
-// another piece has to go first: "th" before "t" and "h", or THE comes out as
-// three runes instead of two. Digraphs first, then single letters, is not a
+// replacement runs over the whole text in turn, so a piece that contains another
+// piece has to go first: "th" before "t" and "h", or THE comes out as three
+// runes instead of two. Digraphs first, then single letters, is not
 // tidy-mindedness — it is the difference between right and wrong.
 //
-// The same order does the decoding, which is the pleasing part. Going back the
-// other way, ᚳᚳ has to be read as "ck" before ᚳ is read as "c", and putting the
-// pair first in the list is already that instruction.
+// The same pair of arrays run backwards does the decoding. Where two letters
+// share a rune, the one listed first is the one that comes home: I before J and
+// U before V, so ᛁ reads as an i and ᚢ as a u.
 
 let pieces = [
-    // Digraphs. One rune apiece, and they must be tried before their letters.
-    "th",   // thorn — attested on the dust jacket, in THE and THERE
-    "ck",   // Tolkien wrote BACK as ᛒᚪᚳᚳ, two cens, so this is his spelling
+    // The pairs Tolkien gave a rune apiece.
+    "th",   // thorn
     "ng",   // ing
-    "ee",   // eoh, whose futhorc value /iː/ is exactly the English "ee"
-    "oo",   // ethel — the weakest choice here; see the note below
+    "ee",   // ingwaz, the plain diamond, doing duty for the English long e
     "ea",   // ear
     "st",   // stan
     "ae",   // aesc
 
-    // Single letters.
+    // Single letters. J shares I's rune and V shares U's. Z is calc — the pair
+    // most charts get wrong, calc being the easiest rune to mistake for a K.
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "n", "o", "p", "r", "s", "t", "u", "v", "w", "x", "y", "z",
 
     // Runes were cut without spaces; a single point divides words and a double
-    // point divides sentences.
+    // point ends a sentence.
     " ", "."
 ]
 
 let marks = [
-    "ᚦ", "ᚳᚳ", "ᛝ", "ᛇ", "ᛟ", "ᛠ", "ᛥ", "ᚫ",
+    "ᚦ", "ᛝ", "ᛜ", "ᛠ", "ᛥ", "ᚫ",
 
-    "ᚪ", "ᛒ", "ᚳ", "ᛞ", "ᛖ", "ᚠ", "ᚷ", "ᚻ", "ᛁ", "ᛄ", "ᛣ", "ᛚ", "ᛗ",
-    "ᚾ", "ᚩ", "ᛈ", "ᛢ", "ᚱ", "ᛋ", "ᛏ", "ᚢ", "ᚡ", "ᚹ", "ᛉ", "ᚣ", "ᛎ",
+    "ᚪ", "ᛒ", "ᚳ", "ᛞ", "ᛖ", "ᚠ", "ᚷ", "ᚻ", "ᛁ", "ᛁ", "ᚴ", "ᛚ", "ᛗ",
+    "ᚾ", "ᚩ", "ᛈ", "ᚱ", "ᛋ", "ᛏ", "ᚢ", "ᚢ", "ᚹ", "ᛉ", "ᚣ", "ᛣ",
 
     "᛫", "᛬"
 ]
@@ -113,6 +133,10 @@ func toEnglish(text: string, plain: [string], cut: [string]) -> string {
     return working
 }
 
+func carve(text: string, caps: [string], small: [string], plain: [string], cut: [string]) -> string {
+    return toRunes(respelled(lowered(text, caps, small)), plain, cut)
+}
+
 func restOfLine(words: [string], from: int) -> string {
     var joined = ""
     for slot in from..length(words) {
@@ -126,29 +150,41 @@ func restOfLine(words: [string], from: int) -> string {
 
 // ---------- what the book actually says ----------
 
-// The line running round the dust jacket of The Hobbit, in Tolkien's own runes.
-// Having it here turns the chart above from a claim into something that can be
-// checked, so the program's first job when you give it nothing to do is to
-// check itself.
+// The line running round the dust jacket of The Hobbit, as transcribed into
+// Unicode on the Unicode mailing list in 2009. Having it here turns the chart
+// above from a claim into something checkable, so with nothing else asked of it
+// the program's first job is to check itself.
+//
+// With one allowance, and it is the interesting one. Tolkien's K is a rune
+// Unicode has no exact match for — the transcriber said so himself, that he
+// could find only one rune where Tolkien plainly drew two, the K having "an
+// extra corner, like a knee" — so he wrote cen in both places and BACK came out
+// with two ᚳ. This program writes kaun for K, the nearest Unicode carries.
+// Allow that single substitution and every other rune in the line still has to
+// agree, which makes it a real check on the other twenty-odd letters rather
+// than a circular one.
 let jacketRunes = "ᚦᛖ᛫ᚻᚩᛒᛒᛁᛏ᛬ᚩᚱ᛬ᚦᛖᚱᛖ᛫ᚪᚾᛞ᛫ᛒᚪᚳᚳ᛫ᚪᚷᚪᛁᚾ"
 let jacketEnglish = "the hobbit.or.there and back again"
 
 let given = args()
 
 if length(given) < 2 {
-    let mine = toRunes(lowered(jacketEnglish, capitals, smalls), pieces, marks)
+    let mine = carve(jacketEnglish, capitals, smalls, pieces, marks)
     print("")
     print("  Tolkien wrote, around the jacket of The Hobbit:")
     print("    " + jacketRunes)
     print("  This program, given the same words:")
     print("    " + mine)
-    if mine == jacketRunes {
-        print("  — the same, rune for rune.")
+    if replace(mine, "ᚴ", "ᚳ") == jacketRunes {
+        print("  — the same, rune for rune, allowing the transcriber's cen for Tolkien's K.")
     } else {
-        print("  — and they differ, which is worth knowing about.")
+        print("  — and they differ by more than that, which is worth knowing about.")
     }
     print("")
-    print("  and back the other way: " + toEnglish(jacketRunes, pieces, marks))
+    // Reading Tolkien's line back gives "bacc", because the transcription
+    // really does have two cens in it. The chart is being honest about what it
+    // was handed rather than quietly correcting it.
+    print("  and his line read back: " + toEnglish(jacketRunes, pieces, marks))
     print("")
     print("  lux run runes.lux stand by the grey stone")
     print("  lux run runes.lux -d \"ᚦᛖ᛫ᚻᚩᛒᛒᛁᛏ\"")
@@ -160,5 +196,5 @@ if length(given) < 2 {
         print(toEnglish(carved, pieces, marks))
     }
 } else {
-    print(toRunes(lowered(restOfLine(given, 1), capitals, smalls), pieces, marks))
+    print(carve(restOfLine(given, 1), capitals, smalls, pieces, marks))
 }

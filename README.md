@@ -132,31 +132,38 @@ if it were code.
 translation — transliteration, one mark at a time, which is exactly what the
 runes on Thror's map are: ordinary English that Bilbo's readers decode from the
 chart on the compass rose. Tolkien did not invent the letters; he took the
-Anglo-Saxon futhorc and wrote modern English in it. The output is the real
-Unicode runic block from U+16A0 up, so the characters are the characters and
-will paste into anything that can show them.
+Anglo-Saxon futhorc and wrote modern English in it, calling the result "English
+runes". The output is the real Unicode runic block from U+16A0 up, so the
+characters are the characters and will paste into anything that can show them.
+
+The chart follows Per Lindberg's *Tolkien's English Runes* (Mellonath Daeron,
+2023), which reads the inscriptions in the book and tabulates what Tolkien
+actually used, and naming a source that precisely matters: the popular rune
+charts disagree with each other, and the first version of this program was
+wrong in six places because it was assembled from them. Tolkien's mode is
+orthographic, one rune per letter, with exceptions that are the whole interest
+of it. J shares I's rune and V shares U's. Q is not a letter at all — it is
+written CW, so QUEEN comes out CWEEN. O and OO are both a single ᚩ, which is
+why the map says DOR for "door". Five pairs get a rune apiece: TH, NG, EE, EA
+and ST.
 
 Run it with no arguments and it checks itself rather than demonstrating itself.
-The dust jacket of The Hobbit carries a full line of Tolkien's own runes, so
-that line is in the source, and the program transliterates the same words and
-compares. It matches rune for rune — including the doubled ᚳᚳ Tolkien used for
-the "ck" in BACK, which is his spelling rather than a letter of the alphabet.
-That reading is where the mapping for TH, E, H, O, B, I, T, R, A, N, D, G and
-the word separator comes from; the digraph runes for EE, OO, EA and ST, and
-calc for K, come from the Hobbit chart, and the source marks which is which.
+The dust jacket of The Hobbit carries a line of Tolkien's own runes, so that
+line is in the source and the program transliterates the same words and
+compares — allowing one documented substitution, since the only Unicode
+transcription of it writes cen where Tolkien drew a K that Unicode has no exact
+match for. Everything else has to agree. It also reproduces the door
+inscription's `f[ee]t` and `[th]r[ee]` without being shown them.
 
-It is aiming at Tolkien's alphabet rather than the archaeologists', and the two
-part company where modern English needs letters Old English did not. English
-wants a V distinct from F and a Z distinct from X, and historical inscriptions
-would fold each pair into one rune. Here every letter keeps its own, which is
-what writing modern English in runes requires and what makes the round trip
-exact.
+Reading back is deliberately not the mirror of writing. A J returns as an I, a V
+as a U, DOOR as DOR, QUEEN as CWEEN. Each of those is Tolkien's own system doing
+what it does, and hiding it would mean inventing runes he never used.
 
 The ordering of the chart is the whole program. Each replacement sweeps the
 entire text, so a piece containing another piece has to be tried first — "th"
 before "t" and "h", or THE comes out three runes long. The same order run
-backwards does the decoding, where ᚳᚳ must be read as "ck" before ᚳ is read as
-"c". Two arrays whose sequence carries as much meaning as their contents.
+backwards decodes, and where two letters share a rune the one listed first is
+the one that comes home.
 
 Three limits shaped these more than anything else, and each one left a mark
 worth reading. lux cannot hand you a single character out of a string, so
