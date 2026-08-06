@@ -7,6 +7,7 @@ cards.txt
 
 # What lux build leaves behind: a native binary named after its program
 blackjack
+cipher
 connect
 dashboard
 drill
@@ -15,13 +16,16 @@ guess
 hangman
 mandelbrot
 maze
+mastermind
 morse
 poker
 random
 rps
 rule30
 runes
+sudoku
 todo
+weekday
 
 # Generated translations, if you convert in place
 *.rs

@@ -206,6 +206,96 @@ struct with a field of that name produces Rust that will not compile; that is
 [lux#77](https://github.com/anderix/lux/issues/77), which was filed the same
 afternoon over a field named `move`.
 
+`sudoku.lux` makes a puzzle and then solves it twice, because the search is the
+dull part. Backtracking will finish any sudoku in about thirty lines and there
+is nothing clever in it; what matters is which empty square you try next. So the
+same search runs over the same puzzle with one difference — one solver takes the
+first empty square it finds, the other takes the square with the fewest values
+still open to it. Over twenty-five generated puzzles the plain solver averaged
+3,795 values written and the careful one 95. Forty times fewer, for about ten
+lines of difference.
+
+The reason is better than the number. A square with one possible value is not a
+decision, so taking those first means the decisions you do face are the smallest
+ones available. The cost is shown rather than hidden: finding the most
+constrained square means looking at every square, so the better solver does far
+more work per step and wins anyway. Cheaper steps against fewer of them is most
+of what choosing an algorithm consists of.
+
+Puzzles are made rather than stored — a pattern grid disguised by renaming digits
+and swapping rows within a band, then emptied one square at a time, each kept out
+only if what remains still has exactly one answer. Twenty-five puzzles were
+checked end to end with no failures: every grid legal, every answer consistent
+with its clues, every puzzle with exactly one answer, and the two solvers always
+agreeing.
+
+`mastermind.lux` is guess.lux with the halving taken away. A code has no order,
+nothing to be higher or lower than, and no middle to aim at — but the scoring
+rule cuts anyway, because an answer is only consistent with some of the 1296
+codes. So the program keeps the list of everything still consistent with what you
+have said, and that list is the whole mind of it: no theory about your code, no
+idea which colours you like, only what has not been ruled out.
+
+Choosing what to say next is where the decision lives. Every candidate splits the
+survivors into groups by the score it would come back with, and after you answer
+only the matching group remains, so a guess whose largest group is small is a
+good guess even when it is unlikely to be right. The program picks the candidate
+whose largest group is smallest — it plays against its own worst case instead of
+hoping.
+
+It only ever guesses codes that are still possible, which is easy to trust and
+not quite the best play. Played against all 1296 codes that costs exactly one
+guess in the worst case: 1,252 solved within five, the other 44 in six, averaging
+4.47. Knuth showed in 1977 that allowing guesses you already know are wrong
+brings the worst case down to five and that five is the floor. So the price of
+only ever saying things that might be true is those 44 codes.
+
+`cipher.lux` shifts letters along the alphabet, enciphers with a keyword, and
+breaks the first of those without being given the key. Twenty-five keys means
+trying all of them breaks a shift cipher, but the program does not need you to
+read twenty-five lines of nonsense to spot the English one: English letters do
+not turn up equally often, shifting the text keeps their shape while changing
+their names, so lining the tally up against what English looks like finds the
+shift by arithmetic. All 25 shifts of a test paragraph were recovered.
+
+Run the same breaker on text enciphered with a keyword and it fails, says so, and
+explains why — which is the better half of the lesson. On a real shift cipher the
+right answer fits English at 45.1 against 501.5 for the next best; with a keyword
+it is 380.7 against 568.5, far too close to mean anything. A keyword changes the
+shift from letter to letter, the tally comes out flat, and a flat tally has
+nothing in it to line up. That is the three hundred years Vigenère went unbroken,
+demonstrated rather than asserted. Both ciphers are checked against the examples
+every account of them uses.
+
+The technique underneath is the most lux-shaped thing in this folder. lux will
+not give you one character out of a string and refuses an empty separator, so
+walking a string is closed off — fine for shifting every letter the same way, and
+fatal for a keyword, where the same letter needs a different shift depending on
+where it sits. But `split` gives the positions back: splitting on "a" leaves the
+runs between the a's, and running lengths along those runs says exactly where
+each one was. Do that for every character you care about and you have rebuilt,
+out of a function that hides positions, precisely where every character is.
+Thirty-odd passes to learn what one subscript would have told you — not
+efficient, but worth seeing, because a thing you were not given can often be
+rebuilt out of the things you were.
+
+`weekday.lux` is the one that does not search at all. Give it a date and it works
+out the day of the week by arithmetic, twice over, by two methods with nothing in
+common — Zeller's congruence from 1882, which moves the start of the year to
+March so February's changing length lands where it cannot disturb anything, and a
+plain count of days from a fixed point. It complains if they disagree. They do
+not: every date from 1583 to 2400 was checked, all 298,769, with no disagreement,
+no gap in the day count and no break in the weekday sequence.
+
+It also settles something countable. The thirteenth falls on a Friday more often
+than on any other day, and the Gregorian calendar closes after exactly four
+hundred years — 146,097 days, 20,871 weeks, nothing left over — so this is a
+count rather than an argument. All 4,800 thirteenths in one cycle: Friday 688,
+Sunday and Wednesday 687, Monday and Tuesday 685, Thursday and Saturday 684. The
+same counts come out starting from 1600, 2000 or 2400, which is the cycle proving
+itself. It is uneven because 4,800 does not divide by seven, so something has to
+be left over, and it turns out to be Friday.
+
 `dashboard.lux` is the one that looks outward. Everything else here makes its
 own data; this reads the machine — uptime, load against the core count, memory,
 and disk — through the two doors a program has onto the world, `readFile` for
