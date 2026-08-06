@@ -1,0 +1,66 @@
+// mandelbrot.lux — the Mandelbrot set, drawn in text.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// Every point on the screen is a number. Square it, add the point back, and do
+// that over and over: some points stay small forever, and some fly off to
+// infinity. The ones that stay are the set. How fast the rest escape is what
+// picks the character we print.
+//
+// Change the four window numbers below and run it again to zoom.
+
+let width = 78
+let height = 32
+let maxSteps = 60
+
+// The window on the number plane. Shrink it around a point to zoom in.
+let leftEdge = -2.2
+let rightEdge = 0.8
+let topEdge = 1.2
+let bottomEdge = -1.2
+
+// Densest character last: the longer a point survives, the darker it prints.
+let shades = [" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"]
+
+// How many steps a point survives before it escapes, capped at cap.
+func escapeTime(cx: float, cy: float, cap: int) -> int {
+    var x = 0.0
+    var y = 0.0
+    var steps = 0
+    // Once a point is further than 2 from the centre it can never come back.
+    while steps < cap && x * x + y * y <= 4.0 {
+        let nextX = x * x - y * y + cx
+        y = 2.0 * x * y + cy
+        x = nextX
+        steps += 1
+    }
+    return steps
+}
+
+// Turn a survival count into one of the shade characters. Nearly every point
+// that escapes does it in the first few steps, so the count is the shade —
+// spreading it evenly over maxSteps would wash the whole picture out.
+func shadeFor(steps: int, cap: int, palette: [string]) -> string {
+    let last = length(palette) - 1
+    if steps >= cap {
+        return palette[last]
+    }
+    // A point that starts at the centre always survives at least one step, so
+    // step 1 is the emptiest shade rather than an unused one.
+    let band = steps - 1
+    if band >= last {
+        return palette[last - 1]
+    }
+    return palette[band]
+}
+
+for row in 0..height {
+    let cy = topEdge + (bottomEdge - topEdge) * float(row) / float(height - 1)
+    var line = ""
+    for col in 0..width {
+        let cx = leftEdge + (rightEdge - leftEdge) * float(col) / float(width - 1)
+        line += shadeFor(escapeTime(cx, cy, maxSteps), maxSteps, shades)
+    }
+    print(line)
+}

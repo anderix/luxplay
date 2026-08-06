@@ -1,0 +1,113 @@
+// random.lux — the one thing lux won't give you, built out of what it will.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// There is no random number in lux, on purpose: every program has to give the
+// same answer every time. But nothing stops you from writing a generator, and
+// what you get is the same one that shipped inside C for thirty years — a
+// linear congruential generator. Multiply, add, wrap around, and the numbers
+// that fall out have no visible pattern even though every one of them was
+// worked out from the one before.
+//
+// The seed is the catch. A generator started from the same number gives the
+// same run every time, which is exactly what you want while you are testing
+// and exactly what you don't want in a game. So the seed comes from outside:
+// `run` asks the system clock for the nanosecond it is right now.
+
+// A generator is a value you hand back and forth, not something that changes
+// underneath you — the same shape as the world in `lux crawl`, where each turn
+// hands you the next one rather than editing the one you had.
+struct Random {
+    seed: int
+}
+
+// The numbers are the ones from C's rand: a multiplier, an offset, and a wrap
+// point of 2^31. Bigger multipliers overflow; these three are known to work.
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+// A number from 0 up to (but not including) `sides`. The low digits of an LCG
+// repeat much sooner than the high ones, so throw them away and take from the
+// top — the difference between dice that feel fair and dice that don't.
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+// Ask the clock what nanosecond it is. If that fails for any reason we still
+// have to hand back a generator, so both arms answer with one.
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+// An arm is a single value, so anything an arm wants to say out loud has to
+// happen inside a function the arm calls.
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — every run will be the same)")
+    return Random(seed: 1)
+}
+
+// `date` hands its answer back with the newline still on it, and a stray
+// newline is not a number — so take it off before parsing, and match the
+// Option rather than assume.
+func seedFrom(printed: string) -> Random {
+    let digits = replace(printed, "\n", "")
+    return match parseInt(digits) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// Everything below is a demonstration. Copy the three functions above into any
+// program that needs to roll something.
+
+var rng = fromClock()
+print("seeded from the clock:", rng.seed)
+print("")
+
+var roll = ""
+for turn in 0..12 {
+    rng = next(rng)
+    roll += string(below(rng, 6) + 1) + " "
+}
+print("twelve rolls of a die:", roll)
+
+// Counting what comes up is the only honest way to look at a generator: over
+// enough rolls every face should land near a sixth of the total.
+var faces = [0, 0, 0, 0, 0, 0]
+let throws = 60000
+for turn in 0..throws {
+    rng = next(rng)
+    faces[below(rng, 6)] += 1
+}
+print("")
+print("out of", throws, "throws, each face should land near", throws / 6)
+for face in 0..6 {
+    let count = faces[face]
+    var bar = ""
+    for tick in 0..(count / 250) {
+        bar += "#"
+    }
+    print(string(face + 1) + " " + bar + " " + string(count))
+}
+
+// Shuffling is the same idea worn differently: walk the array backwards and
+// swap each card with one drawn from the part you haven't reached yet. Every
+// arrangement is equally likely, which is not true of the shuffle people
+// invent first — swapping each card with any other card at all.
+var deck = ["A", "K", "Q", "J", "10", "9", "8", "7"]
+var slot = length(deck) - 1
+while slot > 0 {
+    rng = next(rng)
+    let pick = below(rng, slot + 1)
+    let held = deck[slot]
+    deck[slot] = deck[pick]
+    deck[pick] = held
+    slot -= 1
+}
+print("")
+print("shuffled:", deck)

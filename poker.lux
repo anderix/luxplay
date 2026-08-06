@@ -1,0 +1,1103 @@
+// poker.lux — heads-up Texas Hold'em against a bot, with a tutor at your elbow.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// The tutor is not reading from a chart. Before every decision it deals the
+// rest of the hand out a thousand times or so — every unknown card falling
+// every way it can — and counts how often you finish in front. That share is
+// your equity, and set beside the price of a call it answers the only question
+// the game ever asks: is this bet worth paying?
+//
+// Cards are 0..51. Rank is card / 4, running 0 for a deuce to 12 for an ace,
+// and suit is card % 4. That is all a card ever needs to be.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same cards every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- who you are playing ----------
+
+// The bot's whole character, as six numbers. `trials` is the interesting one:
+// it is how many hands the bot deals out before deciding what it holds, so a
+// weak opponent is not one given bad rules but one given a blurry look at its
+// own cards. It misjudges the way a person does, and for the same reason.
+struct Style {
+    name: string
+    habit: string
+    trials: int
+    callMargin: int
+    raiseAt: int
+    betAt: int
+    bluffPercent: int
+}
+
+func easyStyle() -> Style {
+    return Style(
+        name: "easy",
+        habit: "It calls far too much, almost never raises, and never bluffs — so when it does bet, believe it.",
+        trials: 150,
+        callMargin: -14,
+        raiseAt: 76,
+        betAt: 72,
+        bluffPercent: 0)
+}
+
+func regularStyle() -> Style {
+    return Style(
+        name: "regular",
+        habit: "It folds when the price is wrong, raises when it is well ahead, and bluffs about one time in eight.",
+        trials: 400,
+        callMargin: 2,
+        raiseAt: 63,
+        betAt: 62,
+        bluffPercent: 12)
+}
+
+func hardStyle() -> Style {
+    return Style(
+        name: "hard",
+        habit: "It reads its hand carefully, pays exactly the right price, bets thinner than is comfortable, and bluffs about one time in four.",
+        trials: 900,
+        callMargin: 0,
+        raiseAt: 57,
+        betAt: 55,
+        bluffPercent: 24)
+}
+
+func chooseStyle() -> Style {
+    print("Who are you playing?")
+    print("  e — easy: calls too much and never bluffs, and looks at its own hand carelessly")
+    print("  r — regular: pays the right price and bluffs now and then")
+    print("  h — hard: reads its hand closely, bets thin, and bluffs often")
+    var picked = regularStyle()
+    var chosen = false
+    while !chosen {
+        let typed = replace(replace(input("  e/r/h: "), " ", ""), "\n", "")
+        if typed == "e" || typed == "E" || typed == "easy" {
+            picked = easyStyle()
+            chosen = true
+        } else if typed == "r" || typed == "R" || typed == "regular" || typed == "" {
+            picked = regularStyle()
+            chosen = true
+        } else if typed == "h" || typed == "H" || typed == "hard" {
+            picked = hardStyle()
+            chosen = true
+        } else {
+            print("  One of e, r, or h.")
+        }
+    }
+    return picked
+}
+
+// ---------- naming cards ----------
+
+func rankLabel(r: int) -> string {
+    return match r {
+        0  => "2"
+        1  => "3"
+        2  => "4"
+        3  => "5"
+        4  => "6"
+        5  => "7"
+        6  => "8"
+        7  => "9"
+        8  => "T"
+        9  => "J"
+        10 => "Q"
+        11 => "K"
+        _  => "A"
+    }
+}
+
+func rankPlural(r: int) -> string {
+    return match r {
+        0  => "deuces"
+        1  => "threes"
+        2  => "fours"
+        3  => "fives"
+        4  => "sixes"
+        5  => "sevens"
+        6  => "eights"
+        7  => "nines"
+        8  => "tens"
+        9  => "jacks"
+        10 => "queens"
+        11 => "kings"
+        _  => "aces"
+    }
+}
+
+func suitLabel(s: int) -> string {
+    return match s {
+        0 => "♠"
+        1 => "♥"
+        2 => "♦"
+        _ => "♣"
+    }
+}
+
+func cardLabel(dealt: int) -> string {
+    return rankLabel(dealt / 4) + suitLabel(dealt % 4)
+}
+
+func handLabel(cards: [int]) -> string {
+    var shown = ""
+    for dealt in cards {
+        shown += cardLabel(dealt) + " "
+    }
+    return shown
+}
+
+// ---------- what five cards are worth ----------
+
+func ranksAtLeast(rankCount: [int], want: int) -> [int] {
+    var found: [int]
+    for step in 0..13 {
+        let r = 12 - step
+        if rankCount[r] >= want {
+            found += r
+        }
+    }
+    return found
+}
+
+func ranksExactly(rankCount: [int], want: int) -> [int] {
+    var found: [int]
+    for step in 0..13 {
+        let r = 12 - step
+        if rankCount[r] == want {
+            found += r
+        }
+    }
+    return found
+}
+
+// The top card of the best five-in-a-row, or -1. The ace plays low as well as
+// high, which is the one place a rank is not simply its number.
+func straightTop(present: [bool]) -> int {
+    var highest = -1
+    for step in 0..9 {
+        let top = 4 + step
+        var unbroken = true
+        for back in 0..5 {
+            if !present[top - back] {
+                unbroken = false
+            }
+        }
+        if unbroken {
+            highest = top
+        }
+    }
+    // The wheel: A 2 3 4 5, where the ace sits under the deuce and the five is
+    // the top card.
+    if highest < 0 && present[12] && present[0] && present[1] && present[2] && present[3] {
+        highest = 3
+    }
+    return highest
+}
+
+// One number for a whole hand: the category in the high digits, then the cards
+// that break ties, best first. Comparing two hands is comparing two ints.
+func score(category: int, a: int, b: int, c: int, d: int, e: int) -> int {
+    return ((((category * 13 + a) * 13 + b) * 13 + c) * 13 + d) * 13 + e
+}
+
+func rankAt(list: [int], slot: int) -> int {
+    if slot < length(list) {
+        return list[slot]
+    }
+    return 0
+}
+
+func without(ranks: [int], drop: int, alsoDrop: int) -> [int] {
+    var kept: [int]
+    for r in ranks {
+        if r != drop && r != alsoDrop {
+            kept += r
+        }
+    }
+    return kept
+}
+
+func quadScore(rankCount: [int], quadRanks: [int]) -> int {
+    let kickers = without(ranksAtLeast(rankCount, 1), quadRanks[0], -1)
+    return score(7, quadRanks[0], rankAt(kickers, 0), 0, 0, 0)
+}
+
+// Seven cards can hold two sets of trips, in which case the lower set plays as
+// the pair.
+func houseScore(tripRanks: [int], pairRanks: [int]) -> int {
+    var under = -1
+    if length(tripRanks) > 1 {
+        under = tripRanks[1]
+    }
+    if length(pairRanks) > 0 && pairRanks[0] > under {
+        under = pairRanks[0]
+    }
+    return score(6, tripRanks[0], under, 0, 0, 0)
+}
+
+// The best five-card hand inside any number of cards, as a score.
+func best(cards: [int]) -> int {
+    var rankCount = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var suitCount = [0, 0, 0, 0]
+    for dealt in cards {
+        rankCount[dealt / 4] += 1
+        suitCount[dealt % 4] += 1
+    }
+
+    var flushSuit = -1
+    for suit in 0..4 {
+        if suitCount[suit] >= 5 {
+            flushSuit = suit
+        }
+    }
+
+    var present: [bool]
+    for r in 0..13 {
+        present += rankCount[r] > 0
+    }
+
+    // A straight flush is a straight among the flush suit's cards alone.
+    if flushSuit >= 0 {
+        var suited: [bool]
+        for r in 0..13 {
+            suited += false
+        }
+        for dealt in cards {
+            if dealt % 4 == flushSuit {
+                suited[dealt / 4] = true
+            }
+        }
+        var suitedRanks: [int]
+        for step in 0..13 {
+            let r = 12 - step
+            if suited[r] {
+                suitedRanks += r
+            }
+        }
+        let straightFlush = straightTop(suited)
+        if straightFlush >= 0 {
+            return score(8, straightFlush, 0, 0, 0, 0)
+        }
+        // Hold the flush, but quads and a full house still beat it.
+        let quadRanks = ranksExactly(rankCount, 4)
+        let tripRanks = ranksExactly(rankCount, 3)
+        let pairRanks = ranksExactly(rankCount, 2)
+        if length(quadRanks) > 0 {
+            return quadScore(rankCount, quadRanks)
+        }
+        if length(tripRanks) > 0 && (length(tripRanks) > 1 || length(pairRanks) > 0) {
+            return houseScore(tripRanks, pairRanks)
+        }
+        return score(5, suitedRanks[0], suitedRanks[1], suitedRanks[2],
+                     suitedRanks[3], suitedRanks[4])
+    }
+
+    let quadRanks = ranksExactly(rankCount, 4)
+    if length(quadRanks) > 0 {
+        return quadScore(rankCount, quadRanks)
+    }
+
+    let tripRanks = ranksExactly(rankCount, 3)
+    let pairRanks = ranksExactly(rankCount, 2)
+    if length(tripRanks) > 0 && (length(tripRanks) > 1 || length(pairRanks) > 0) {
+        return houseScore(tripRanks, pairRanks)
+    }
+
+    let inARow = straightTop(present)
+    if inARow >= 0 {
+        return score(4, inARow, 0, 0, 0, 0)
+    }
+
+    let all = ranksAtLeast(rankCount, 1)
+    if length(tripRanks) > 0 {
+        let kickers = without(all, tripRanks[0], -1)
+        return score(3, tripRanks[0], rankAt(kickers, 0), rankAt(kickers, 1), 0, 0)
+    }
+    if length(pairRanks) > 1 {
+        let kickers = without(all, pairRanks[0], pairRanks[1])
+        return score(2, pairRanks[0], pairRanks[1], rankAt(kickers, 0), 0, 0)
+    }
+    if length(pairRanks) == 1 {
+        let kickers = without(all, pairRanks[0], -1)
+        return score(1, pairRanks[0], rankAt(kickers, 0), rankAt(kickers, 1),
+                     rankAt(kickers, 2), 0)
+    }
+    return score(0, all[0], all[1], all[2], all[3], all[4])
+}
+
+// Reading a score back out in English. The digits come out in the same order
+// they went in.
+func scoreName(value: int) -> string {
+    let category = value / 371293
+    let first = (value / 28561) % 13
+    let second = (value / 2197) % 13
+    let third = (value / 169) % 13
+    // Two hands can share a category and a pair and still not be equal, so the
+    // kicker goes in the name — otherwise a showdown reads as a tie that isn't.
+    return match category {
+        8 => "a straight flush, " + rankLabel(first) + " high"
+        7 => "four " + rankPlural(first)
+        6 => "a full house, " + rankPlural(first) + " full of " + rankPlural(second)
+        5 => "a flush, " + rankLabel(first) + " high"
+        4 => "a straight, " + rankLabel(first) + " high"
+        3 => "three " + rankPlural(first) + ", " + rankLabel(second) + " kicker"
+        2 => "two pair, " + rankPlural(first) + " and " + rankPlural(second)
+             + ", " + rankLabel(third) + " kicker"
+        1 => "a pair of " + rankPlural(first) + ", " + rankLabel(second) + " kicker"
+        _ => rankLabel(first) + " high"
+    }
+}
+
+// ---------- how often this hand wins ----------
+
+struct Odds {
+    winPercent: int
+    rng: Random
+}
+
+func joined(first: [int], second: [int]) -> [int] {
+    var both: [int]
+    for item in first {
+        both += item
+    }
+    for item in second {
+        both += item
+    }
+    return both
+}
+
+func holds(cards: [int], wanted: int) -> bool {
+    for dealt in cards {
+        if dealt == wanted {
+            return true
+        }
+    }
+    return false
+}
+
+// Deal the rest of the hand out `trials` times against one unknown hand and
+// count how often we finish in front. A split counts as half, because half the
+// pot is what a split pays. That share, in whole percent — the sampling is not
+// steady enough to mean anything finer.
+func chances(hole: [int], board: [int], trials: int, r: Random) -> Odds {
+    let seen = joined(hole, board)
+    var deck: [int]
+    for c in 0..52 {
+        if !holds(seen, c) {
+            deck += c
+        }
+    }
+
+    let toCome = 5 - length(board)
+    let needed = toCome + 2
+    var rng = r
+    var halves = 0
+
+    for trial in 0..trials {
+        // Shuffle only as far as the cards this trial actually needs.
+        for slot in 0..needed {
+            rng = next(rng)
+            let pick = slot + below(rng, length(deck) - slot)
+            let held = deck[slot]
+            deck[slot] = deck[pick]
+            deck[pick] = held
+        }
+        var mine = joined(hole, board)
+        var theirs = joined([deck[0], deck[1]], board)
+        for extra in 0..toCome {
+            mine += deck[2 + extra]
+            theirs += deck[2 + extra]
+        }
+        let myScore = best(mine)
+        let theirScore = best(theirs)
+        if myScore > theirScore {
+            halves += 2
+        }
+        if myScore == theirScore {
+            halves += 1
+        }
+    }
+    return Odds(winPercent: halves * 50 / trials, rng: rng)
+}
+
+// ---------- the tutor ----------
+
+// The share of the time a call has to be good just to break even: you are
+// paying `toCall` to win the pot plus your own call.
+func breakEven(toCall: int, pot: int) -> int {
+    return toCall * 100 / (pot + toCall)
+}
+
+// What two cards are before a flop exists to judge them against.
+func startingNote(hole: [int]) -> string {
+    let high = hole[0] / 4
+    let low = hole[1] / 4
+    let suited = hole[0] % 4 == hole[1] % 4
+    var top = high
+    var bottom = low
+    if low > high {
+        top = low
+        bottom = high
+    }
+    if top == bottom {
+        if top >= 10 {
+            return "A big pocket pair — already a made hand, and ahead of almost any two cards it could be facing."
+        }
+        if top >= 5 {
+            return "A middling pocket pair. It wins small pots as it stands and big ones on the one flop in eight that makes it trips."
+        }
+        return "A small pocket pair. Cheap to see a flop with, but unless it makes trips it is second best more often than it looks."
+    }
+    let gap = top - bottom
+    if suited && gap == 1 {
+        return "Suited connectors. They miss most flops, and the flushes and straights they do make are worth more than the flops they cost."
+    }
+    if suited {
+        return "Suited, which is worth about two percent more than the same two cards in different suits — real, but less than most people play it for."
+    }
+    if top >= 10 && bottom >= 9 {
+        return "Two big cards. Strong before the flop, but they need to pair to stay strong after it."
+    }
+    if gap >= 5 && bottom <= 6 {
+        return "Two cards with nothing to do with each other — the weakest shape there is. Against one opponent, though, weak is relative: there is only one hand to beat, and the price can still be right."
+    }
+    return "Nothing special and nothing terrible. The flop decides it."
+}
+
+// ---------- the game ----------
+
+let preflopTrials = 1000
+let postflopTrials = 1200
+
+print("Heads-up hold'em, 200 chips each, blinds 1 and 2.")
+print("One raise to a street, and a raise is half the pot.")
+print("")
+
+let style = chooseStyle()
+
+var rng = fromClock()
+var yourChips = 200
+var botChips = 200
+var youAreButton = true
+var stillPlaying = true
+var handsPlayed = 0
+
+// What the tutor advised against what you did, kept for the end. Advice you
+// hear and forget is not much use; advice you can count is feedback.
+var decisionsMade = 0
+var decisionsAgreed = 0
+var loosecalls = 0
+var chipsCalledOff = 0
+var costOfLooseCalls = 0
+var timidFolds = 0
+var wildBets = 0
+var missedValue = 0
+
+print("")
+print("Playing the " + style.name + " bot. " + style.habit)
+print("Type f to fold, c to call, k to check, b to bet, r to raise, q to leave.")
+print("")
+
+while stillPlaying && yourChips > 1 && botChips > 1 {
+    handsPlayed += 1
+
+    var deck: [int]
+    for c in 0..52 {
+        deck += c
+    }
+    var slot = 51
+    while slot > 0 {
+        rng = next(rng)
+        let pick = below(rng, slot + 1)
+        let held = deck[slot]
+        deck[slot] = deck[pick]
+        deck[pick] = held
+        slot -= 1
+    }
+
+    let yourHole = [deck[0], deck[1]]
+    let botHole = [deck[2], deck[3]]
+    var board: [int]
+
+    // In a two-handed game the button posts the small blind and acts first
+    // before the flop, then acts last on every street after it.
+    var yourStreet = 1
+    var botStreet = 2
+    if !youAreButton {
+        yourStreet = 2
+        botStreet = 1
+    }
+    yourChips -= yourStreet
+    botChips -= botStreet
+    var pot = yourStreet + botStreet
+    // What each of us has put in across the whole hand, so that leaving in the
+    // middle of one hands the chips back rather than swallowing them.
+    var yourPaid = yourStreet
+    var botPaid = botStreet
+
+    print("── hand " + string(handsPlayed) + " ─────────────────────────────")
+    var seat = "You are on the button and post the small blind."
+    if !youAreButton {
+        seat = "The bot is on the button. You post the big blind."
+    }
+    print(seat)
+    print("You hold " + handLabel(yourHole))
+
+    var stage = 0
+    var handLive = true
+    var youFolded = false
+    var botFolded = false
+
+    while handLive && stage < 4 && stillPlaying {
+        if stage == 1 {
+            board += deck[4]
+            board += deck[5]
+            board += deck[6]
+            print("")
+            print("flop:  " + handLabel(board))
+        }
+        if stage == 2 {
+            board += deck[7]
+            print("")
+            print("turn:  " + handLabel(board))
+        }
+        if stage == 3 {
+            board += deck[8]
+            print("")
+            print("river: " + handLabel(board))
+        }
+        if stage > 0 {
+            yourStreet = 0
+            botStreet = 0
+        }
+
+        // Somebody with no chips left cannot be bet at, so the rest of the
+        // cards simply come out.
+        var betting = yourChips > 0 && botChips > 0
+        var acted = 0
+        var raisesLeft = 1
+        // The button acts first before the flop and last after it.
+        var actorIsYou = youAreButton
+        if stage > 0 {
+            actorIsYou = !youAreButton
+        }
+
+        while betting && stillPlaying {
+            var toCall = botStreet - yourStreet
+            if !actorIsYou {
+                toCall = yourStreet - botStreet
+            }
+            if toCall < 0 {
+                toCall = 0
+            }
+
+            if actorIsYou {
+                if toCall > yourChips {
+                    toCall = yourChips
+                }
+                let odds = chances(yourHole, board, whichTrials(stage, preflopTrials, postflopTrials), rng)
+                rng = odds.rng
+                let equity = odds.winPercent
+
+                print("")
+                print("  pot " + string(pot) + " · you " + string(yourChips)
+                    + " · bot " + string(botChips))
+                if stage == 0 {
+                    print("  " + startingNote(yourHole))
+                } else {
+                    print("  You have " + scoreName(best(joined(yourHole, board))) + ".")
+                }
+                print("  You win this hand about " + string(equity) + "% of the time from here.")
+
+                var need = 0
+                if toCall > 0 {
+                    need = breakEven(toCall, pot)
+                    print("  Calling costs " + string(toCall) + " into a pot of " + string(pot)
+                        + ", so it has to be good " + string(need) + "% of the time to break even.")
+                    // The simulation deals the opponent any two cards, which is
+                    // exactly what somebody who just bet into you does not have.
+                    // How wrong that makes the number depends on who bet.
+                    if toCall > 2 {
+                        print("  " + betReadNote(style))
+                    }
+                }
+                let tip = suggest(equity, need, toCall, raisesLeft > 0, style)
+                if toCall > 0 {
+                    print("  " + tip.words)
+                } else {
+                    print("  Nothing to call. " + tip.words)
+                }
+
+                // An illegal move costs you nothing and asks again — the turn
+                // does not pass until something legal happens to the pot.
+                var decided = false
+                // What you actually did, in the same four letters the tutor
+                // speaks: fold, call, check, or put chips in.
+                var youDid = ""
+                while !decided {
+                    let move = firstLetter(input("  " + promptFor(toCall, raisesLeft > 0) + ": "))
+                    if move == "q" {
+                        stillPlaying = false
+                        betting = false
+                        decided = true
+                    } else if move == "f" && toCall > 0 {
+                        youFolded = true
+                        handLive = false
+                        betting = false
+                        decided = true
+                        youDid = "f"
+                        print("  You fold.")
+                    } else if (move == "c" || move == "k") && toCall == 0 {
+                        print("  You check.")
+                        acted += 1
+                        decided = true
+                        youDid = "k"
+                    } else if move == "c" && toCall > 0 {
+                        yourChips -= toCall
+                        yourStreet += toCall
+                        yourPaid += toCall
+                        pot += toCall
+                        print("  You call " + string(toCall) + ".")
+                        acted += 1
+                        decided = true
+                        youDid = "c"
+                    } else if (move == "b" || move == "r") && raisesLeft > 0 {
+                        let put = raiseAmount(toCall, pot, yourChips)
+                        yourChips -= put
+                        yourStreet += put
+                        yourPaid += put
+                        pot += put
+                        raisesLeft -= 1
+                        acted += 1
+                        decided = true
+                        youDid = "b"
+                        if toCall > 0 {
+                            print("  You raise " + string(put) + ".")
+                        } else {
+                            print("  You bet " + string(put) + ".")
+                        }
+                    } else {
+                        print("  " + refusal(toCall, raisesLeft > 0))
+                    }
+                }
+
+                // Score the decision against the advice that was on the screen
+                // when you made it. Spots the tutor called close are not scored
+                // at all, because it did not have an answer worth marking.
+                if youDid != "" {
+                    decisionsMade += 1
+                    if youDid == tip.move {
+                        decisionsAgreed += 1
+                    } else if tip.firm {
+                        if youDid == "c" && tip.move == "f" {
+                            loosecalls += 1
+                            chipsCalledOff += toCall
+                            // callValue is negative here, which is the point.
+                            costOfLooseCalls -= callValue(equity, toCall, pot)
+                        } else if youDid == "f" {
+                            timidFolds += 1
+                        } else if youDid == "b" {
+                            wildBets += 1
+                        } else {
+                            missedValue += 1
+                        }
+                    }
+                }
+            } else {
+                if toCall > botChips {
+                    toCall = botChips
+                }
+                let theirOdds = chances(botHole, board, style.trials, rng)
+                rng = theirOdds.rng
+                rng = next(rng)
+                let bluffing = below(rng, 100) < style.bluffPercent
+                let botMove = botChoice(theirOdds.winPercent, toCall, pot, raisesLeft > 0, bluffing, style)
+
+                if botMove == "f" {
+                    botFolded = true
+                    handLive = false
+                    betting = false
+                    print("  The bot folds.")
+                } else if botMove == "k" {
+                    print("  The bot checks.")
+                    acted += 1
+                } else if botMove == "c" {
+                    botChips -= toCall
+                    botStreet += toCall
+                    botPaid += toCall
+                    pot += toCall
+                    print("  The bot calls " + string(toCall) + ".")
+                    acted += 1
+                } else {
+                    let put = raiseAmount(toCall, pot, botChips)
+                    botChips -= put
+                    botStreet += put
+                    botPaid += put
+                    pot += put
+                    raisesLeft -= 1
+                    acted += 1
+                    if toCall > 0 {
+                        print("  The bot raises " + string(put) + ".")
+                    } else {
+                        print("  The bot bets " + string(put) + ".")
+                    }
+                }
+            }
+
+            if betting {
+                if yourStreet == botStreet && acted >= 2 {
+                    betting = false
+                }
+                if yourChips == 0 || botChips == 0 {
+                    betting = false
+                }
+                actorIsYou = !actorIsYou
+            }
+        }
+
+        // If one of us ran out of chips mid-street the other may have put in
+        // more than could be called. That excess was never at stake.
+        if yourStreet > botStreet && handLive {
+            let back = yourStreet - botStreet
+            yourChips += back
+            yourPaid -= back
+            pot -= back
+            yourStreet -= back
+        }
+        if botStreet > yourStreet && handLive {
+            let back = botStreet - yourStreet
+            botChips += back
+            botPaid -= back
+            pot -= back
+            botStreet -= back
+        }
+
+        stage += 1
+    }
+
+    if !stillPlaying {
+        // Left in the middle of a hand: nobody won it, so nobody keeps it.
+        yourChips += yourPaid
+        botChips += botPaid
+    }
+
+    if stillPlaying {
+        if youFolded {
+            botChips += pot
+            print("  The bot takes " + string(pot) + ".")
+        } else if botFolded {
+            yourChips += pot
+            print("  You take " + string(pot) + ".")
+        } else {
+            // Everything still to come comes out, then the hands are compared.
+            while length(board) < 5 {
+                board += deck[4 + length(board)]
+            }
+            let yourScore = best(joined(yourHole, board))
+            let theirScore = best(joined(botHole, board))
+            print("")
+            print("  board: " + handLabel(board))
+            print("  the bot held " + handLabel(botHole) + "— " + scoreName(theirScore))
+            print("  you held     " + handLabel(yourHole) + "— " + scoreName(yourScore))
+            if yourScore > theirScore {
+                yourChips += pot
+                print("  You win " + string(pot) + ".")
+            } else if theirScore > yourScore {
+                botChips += pot
+                print("  The bot wins " + string(pot) + ".")
+            } else {
+                yourChips += pot / 2
+                botChips += pot - pot / 2
+                print("  Split pot.")
+            }
+        }
+
+        print("")
+        print("  you " + string(yourChips) + " · bot " + string(botChips))
+        print("")
+        youAreButton = !youAreButton
+    }
+}
+
+print("")
+if yourChips <= 1 {
+    print("You're out of chips after " + string(handsPlayed) + " hands.")
+} else if botChips <= 1 {
+    print("You broke the bot in " + string(handsPlayed) + " hands.")
+} else {
+    print("You leave after " + string(handsPlayed) + " hands with " + string(yourChips)
+        + " of the 200 you sat down with.")
+}
+
+// The part a game cannot tell you on its own. Chips at the end are mostly the
+// cards you were dealt; this is the part that was yours.
+if decisionsMade > 0 {
+    print("")
+    print("── how you played ──────────────────────")
+    print("You made " + string(decisionsMade) + " decisions with the odds in front of you, and "
+        + string(decisionsAgreed) + " matched what the tutor would have done.")
+
+    if loosecalls > 0 {
+        print("")
+        print("You called past the price " + string(loosecalls) + " times, paying "
+            + string(chipsCalledOff) + " chips to do it. By the numbers on the screen when you paid, those calls came to about "
+            + string(costOfLooseCalls) + " chips worse than folding would have been.")
+        print("This is the leak worth caring about, because it costs the same whether the hand won or lost. The price was wrong when you paid it, and how the cards happened to fall afterwards does not change that.")
+    }
+    if timidFolds > 0 {
+        print("")
+        print("You folded " + string(timidFolds) + " times when the price was one worth paying. Folding costs nothing you can see, which is exactly what makes it the easiest mistake to keep making.")
+    }
+    if missedValue > 0 {
+        print("")
+        print("You checked or called " + string(missedValue) + " times holding a hand the tutor wanted betting. Money you never asked for is money you never win.")
+    }
+    if wildBets > 0 {
+        print("")
+        print("You put chips in " + string(wildBets) + " times with a hand that did not want a bigger pot. Against something that folds, that is a bluff; against something that calls, it is a donation.")
+    }
+    if loosecalls == 0 && timidFolds == 0 && missedValue == 0 && wildBets == 0 {
+        print("")
+        print("Nothing to correct — every decision was either the tutor's or one it called too close to score.")
+    }
+
+    print("")
+    print("Spots the tutor called close are not counted either way. And all of it rests on equity against any two cards, which is the one assumption you have just spent a session learning to distrust.")
+}
+
+// ---------- the pieces the table above leans on ----------
+
+// Before the flop there are five cards to come and the answer moves slowly, so
+// fewer trials buy the same confidence.
+func whichTrials(stage: int, early: int, late: int) -> int {
+    if stage == 0 {
+        return early
+    }
+    return late
+}
+
+// Half the pot, but never more than there is to bet with, and never a bet so
+// small it isn't one.
+func raiseAmount(toCall: int, pot: int, chips: int) -> int {
+    var put = toCall + (pot + toCall) / 2
+    if put < 2 {
+        put = 2
+    }
+    if put > chips {
+        put = chips
+    }
+    return put
+}
+
+// Only ever offer the moves that are legal in this spot. A prompt that lists a
+// move the game will refuse is a trap, and it is the same list twice over —
+// once to choose from and once to explain a refusal.
+func promptFor(toCall: int, canRaise: bool) -> string {
+    if toCall > 0 {
+        if canRaise {
+            return "f/c/r/q"
+        }
+        return "f/c/q"
+    }
+    if canRaise {
+        return "k/b/q"
+    }
+    return "k/q"
+}
+
+func refusal(toCall: int, canRaise: bool) -> string {
+    if toCall > 0 && !canRaise {
+        return "There is a bet to you and the street's one raise is spent, so it is fold or call."
+    }
+    if toCall > 0 {
+        return "There is a bet to you: fold, call, or raise."
+    }
+    if !canRaise {
+        return "Nothing to call and no raise left, so all you can do is check."
+    }
+    return "Nothing to call: check or bet."
+}
+
+func firstLetter(typed: string) -> string {
+    let plain = replace(replace(typed, " ", ""), "\n", "")
+    if plain == "" {
+        return "q"
+    }
+    for choice in ["f", "c", "k", "b", "r", "q"] {
+        if plain == choice || plain == upperOf(choice) {
+            return choice
+        }
+    }
+    return "?"
+}
+
+func upperOf(letter: string) -> string {
+    return match letter {
+        "f" => "F"
+        "c" => "C"
+        "k" => "K"
+        "b" => "B"
+        "r" => "R"
+        _   => "Q"
+    }
+}
+
+// Equity is measured against any two cards. A bet is evidence the opponent does
+// not hold any two cards, and how strong that evidence is depends entirely on
+// how often this particular opponent bets without a hand.
+func betReadNote(style: Style) -> string {
+    if style.bluffPercent == 0 {
+        return "That number is how you do against any two cards — and this one never bluffs, so what it just bet is a good deal better than any two cards."
+    }
+    if style.bluffPercent >= 20 {
+        return "That number is how you do against any two cards. This one bluffs about one hand in four, so its bet is less news than it looks."
+    }
+    return "Read that number carefully: it is how you do against any two cards, and a bot that just bet is not holding any two cards."
+}
+
+// The advice, which is the whole point: a call is worth making when it wins
+// more often than it has to.
+//
+// One function decides and hands back both halves — the move it would make and
+// the words for it. Splitting those in two would let the sentence you read and
+// the answer the summary scores you against drift apart, and a tutor that marks
+// you against advice it didn't give is worse than no tutor.
+struct Suggestion {
+    move: string
+    words: string
+    firm: bool
+}
+
+func suggest(equity: int, need: int, toCall: int, canRaise: bool, style: Style) -> Suggestion {
+    if toCall > 0 {
+        if equity >= 70 && canRaise {
+            return Suggestion(move: "b", firm: true,
+                words: "Raise. You are so far ahead of this price that the mistake would be letting the pot stay small.")
+        }
+        if equity >= need + 12 {
+            return Suggestion(move: "c", firm: true,
+                words: "Call, comfortably — you are winning far more often than the price asks for.")
+        }
+        if equity >= need {
+            // Inside a point or two of the price, either answer is worth
+            // near enough the same, so nothing is scored against you here.
+            return Suggestion(move: "c", firm: equity >= need + 2,
+                words: "Call, but only just. This is close enough that either answer is nearly the same in the long run.")
+        }
+        if equity >= need - 6 {
+            return Suggestion(move: "f", firm: false,
+                words: "Fold, narrowly. You are behind the price, and hands this close are where a session leaks.")
+        }
+        return Suggestion(move: "f", firm: true,
+            words: "Fold. You need " + string(need) + "% and you have " + string(equity) + "%, and no amount of hoping closes that.")
+    }
+
+    var valueAt = 62
+    if callsTooMuch(style) {
+        valueAt = 55
+    }
+    if equity >= valueAt && canRaise {
+        if callsTooMuch(style) {
+            return Suggestion(move: "b", firm: true,
+                words: "Bet. You would want a stronger hand than this against most opponents, but this one calls with too much for that to matter.")
+        }
+        return Suggestion(move: "b", firm: true,
+            words: "Bet. A hand this strong wants chips in the pot while you are the one holding it.")
+    }
+    if equity >= 50 {
+        return Suggestion(move: "k", firm: true,
+            words: "Check. You are a shade ahead, but not far enough that a bet would be called by anything worse.")
+    }
+    if canRaise && callsTooMuch(style) {
+        return Suggestion(move: "k", firm: true,
+            words: "Check. A bet here would be a bluff, and a bluff against something that calls this much is just money handed over.")
+    }
+    if canRaise && style.bluffPercent >= 20 {
+        // A spot with two right answers, and the summary should not pretend
+        // otherwise by scoring one of them.
+        return Suggestion(move: "k", firm: false,
+            words: "Check — or bluff, if you fancy it. This one folds when the price is wrong, which is the only thing that ever makes a bluff work.")
+    }
+    return Suggestion(move: "k", firm: true,
+        words: "Check, and be glad it's free. This hand does not want to build a pot.")
+}
+
+// A bot whose call margin is below zero pays past the price it is offered,
+// which is the whole of what "calls too much" means.
+func callsTooMuch(style: Style) -> bool {
+    return style.callMargin < 0
+}
+
+// The price is only half the question. The other half is who is across the
+// table, and it moves the answer in both directions: value bets get thinner
+// against somebody who calls too much, and bluffs stop working against them
+// entirely.
+// What a call was worth, in chips, by the numbers in front of you at the time:
+// the pot you win when you are right against the call you lose when you are
+// wrong. Negative means the call costs more than it brings back.
+func callValue(equity: int, toCall: int, pot: int) -> int {
+    return (equity * pot - (100 - equity) * toCall) / 100
+}
+
+// The bot's whole mind, in one function: it knows its own equity and the price
+// in front of it, and nothing whatever about your cards.
+func botChoice(equity: int, toCall: int, pot: int, canRaise: bool, bluffing: bool, style: Style) -> string {
+    if toCall == 0 {
+        if equity >= style.betAt && canRaise {
+            return "b"
+        }
+        if bluffing && equity < 35 && canRaise {
+            return "b"
+        }
+        return "k"
+    }
+    let need = breakEven(toCall, pot)
+    if equity >= style.raiseAt && canRaise {
+        return "r"
+    }
+    // Raising with nothing. A bot that only ever raises its good hands is one
+    // you can fold to every time, so the same coin that decides a bluff bet
+    // decides this — which leaves the easy bot, whose coin never comes up,
+    // raising only when it means it.
+    if bluffing && equity < 30 && canRaise {
+        return "r"
+    }
+    // A margin below zero is a bot that calls past the price it is being
+    // offered, which is the commonest way a person loses money at this game.
+    if equity >= need + style.callMargin {
+        return "c"
+    }
+    return "f"
+}

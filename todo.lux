@@ -1,0 +1,231 @@
+// todo.lux — a list that survives being closed.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// Every program before this one forgot everything the moment it stopped. This
+// one keeps a file, and that is the whole difference between a program and an
+// app: somewhere to put what you did so that next time you can pick it up.
+//
+//   lux run todo.lux                  what's on the list
+//   lux run todo.lux add buy milk     put something on it
+//   lux run todo.lux done 2           tick item 2 off
+//   lux run todo.lux drop 2           take item 2 away
+//   lux run todo.lux clear            throw out everything ticked
+//
+// The file is todo.txt in whatever folder you run it from, one item to a line,
+// and a line that starts with x is one you have finished. You can open it in
+// any editor and it will still make sense, which is the point of keeping it in
+// text rather than something cleverer.
+
+let listFile = "todo.txt"
+
+// A missing file is not a failure here — it is what an empty list looks like
+// before you have added anything, so it comes back as no lines rather than as
+// an error you have to handle.
+func loadLines(path: string) -> [string] {
+    return match readFile(path) {
+        ok(let text) => realLines(text)
+        err(let why) => []
+    }
+}
+
+// A file that ends in a newline splits into a last piece with nothing in it,
+// and blank lines are not items.
+func realLines(text: string) -> [string] {
+    var kept: [string]
+    for line in split(text, "\n") {
+        if replace(line, " ", "") != "" {
+            kept += line
+        }
+    }
+    return kept
+}
+
+// Does this line start with the tick? There is no way to ask a string for its
+// first character, and `contains` would say yes to "book x ray appointment",
+// which is somewhere the mark appears but not where it counts.
+//
+// `split` answers it exactly. Cutting a line at every "x " gives a first piece
+// that is whatever came before the first one — and only a line that begins with
+// the mark has nothing in front of it.
+func isDone(line: string) -> bool {
+    let pieces = split(line, "x ")
+    return length(pieces) > 1 && pieces[0] == ""
+}
+
+func withoutMark(line: string) -> string {
+    if isDone(line) {
+        let pieces = split(line, "x ")
+        var rest = ""
+        for slot in 1..length(pieces) {
+            if slot > 1 {
+                rest += "x "
+            }
+            rest += pieces[slot]
+        }
+        return rest
+    }
+    return line
+}
+
+func saveLines(path: string, lines: [string]) -> bool {
+    var text = ""
+    for line in lines {
+        text += line + "\n"
+    }
+    return match writeFile(path, text) {
+        ok(let saved) => true
+        err(let why)  => saveFailed(path, why)
+    }
+}
+
+// The path is a parameter rather than the `listFile` at the top of the file,
+// because a function cannot see a name declared out there — and on one of the
+// three targets it can, which is why the failure is worth being careful about.
+func saveFailed(path: string, why: string) -> bool {
+    eprint("could not write " + path + ": " + why)
+    return false
+}
+
+func showList(lines: [string]) {
+    if length(lines) == 0 {
+        print("Nothing on the list.")
+        print("Add something: lux run todo.lux add walk the dog")
+    } else {
+        var left = 0
+        for slot in 0..length(lines) {
+            let line = lines[slot]
+            var mark = "  "
+            if isDone(line) {
+                mark = "x "
+            } else {
+                left += 1
+            }
+            print(string(slot + 1) + ". " + mark + withoutMark(line))
+        }
+        print("")
+        print(string(left) + " to go, " + string(length(lines) - left) + " done.")
+    }
+}
+
+// Everything after the command word, back together as one string. `args` hands
+// them over already split on the spaces, so this is putting back what the shell
+// took apart.
+func restOfLine(words: [string], from: int) -> string {
+    var joined = ""
+    for slot in from..length(words) {
+        if slot > from {
+            joined += " "
+        }
+        joined += words[slot]
+    }
+    return joined
+}
+
+// An item number is what somebody typed, so it might not be a number at all,
+// and it counts from 1 the way the list is printed rather than from 0 the way
+// the array is.
+func itemNumber(words: [string], count: int) -> int {
+    if length(words) < 3 {
+        return -1
+    }
+    return match parseInt(words[2]) {
+        some(let n) => insideList(n, count)
+        none        => -1
+    }
+}
+
+func insideList(n: int, count: int) -> int {
+    if n >= 1 && n <= count {
+        return n - 1
+    }
+    return -1
+}
+
+let words = args()
+var lines = loadLines(listFile)
+
+if length(words) < 2 {
+    showList(lines)
+} else {
+    let command = words[1]
+
+    if command == "add" {
+        let what = restOfLine(words, 2)
+        if what == "" {
+            print("Add what? lux run todo.lux add walk the dog")
+        } else {
+            lines += what
+            if saveLines(listFile, lines) {
+                print("Added: " + what)
+                print("")
+                showList(lines)
+            }
+        }
+
+    } else if command == "done" {
+        let slot = itemNumber(words, length(lines))
+        if slot < 0 {
+            print("Which one? There " + areIs(length(lines)) + ".")
+        } else if isDone(lines[slot]) {
+            print("Item " + string(slot + 1) + " was already done.")
+        } else {
+            lines[slot] = "x " + lines[slot]
+            if saveLines(listFile, lines) {
+                print("Done: " + withoutMark(lines[slot]))
+                print("")
+                showList(lines)
+            }
+        }
+
+    } else if command == "drop" {
+        let slot = itemNumber(words, length(lines))
+        if slot < 0 {
+            print("Which one? There " + areIs(length(lines)) + ".")
+        } else {
+            let gone = withoutMark(lines[slot])
+            var kept: [string]
+            for other in 0..length(lines) {
+                if other != slot {
+                    kept += lines[other]
+                }
+            }
+            if saveLines(listFile, kept) {
+                print("Dropped: " + gone)
+                print("")
+                showList(kept)
+            }
+        }
+
+    } else if command == "clear" {
+        var kept: [string]
+        for line in lines {
+            if !isDone(line) {
+                kept += line
+            }
+        }
+        let cleared = length(lines) - length(kept)
+        if cleared == 0 {
+            print("Nothing ticked off to clear.")
+        } else if saveLines(listFile, kept) {
+            print("Cleared " + string(cleared) + ".")
+            print("")
+            showList(kept)
+        }
+
+    } else {
+        print("No such command: " + command)
+        print("Try: add, done, drop, clear, or nothing at all to see the list.")
+    }
+}
+
+func areIs(count: int) -> string {
+    if count == 1 {
+        return "is only item 1"
+    }
+    if count == 0 {
+        return "is nothing on the list yet"
+    }
+    return "are items 1 to " + string(count)
+}

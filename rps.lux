@@ -1,0 +1,180 @@
+// rps.lux — rock, paper, scissors against an opponent with a memory.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// lux has no way to make a random number, so this opponent doesn't try. It
+// watches instead. For every pair of moves you have just played it keeps a
+// tally of what you played next, and each turn it looks up the pair you are
+// sitting on and plays the counter to whatever you did most often after it.
+//
+// Play randomly and it can only break even. Play like a person and it wins,
+// because people are bad at being random, and a table of counts is very good
+// at noticing.
+
+enum Move {
+    rock
+    paper
+    scissors
+}
+
+func moveName(m: Move) -> string {
+    return match m {
+        rock     => "rock"
+        paper    => "paper"
+        scissors => "scissors"
+    }
+}
+
+// Moves live in the tally as 0, 1, 2 — rock, paper, scissors — because that is
+// what indexes a row of counts.
+func moveNumber(m: Move) -> int {
+    return match m {
+        rock     => 0
+        paper    => 1
+        scissors => 2
+    }
+}
+
+func moveFor(n: int) -> Move {
+    if n == 0 {
+        return Move.rock
+    }
+    if n == 1 {
+        return Move.paper
+    }
+    return Move.scissors
+}
+
+// Each move is beaten by the next one round the circle.
+func beatenBy(n: int) -> int {
+    return (n + 1) % 3
+}
+
+// A match arm is one value, not a block, so unwrapping happens in its own
+// little function and the turn below stays a straight run of statements.
+func numberOf(picked: Option<Move>) -> int {
+    return match picked {
+        some(let m) => moveNumber(m)
+        none        => -1
+    }
+}
+
+func readMove(typed: string) -> Option<Move> {
+    if typed == "r" || typed == "R" || typed == "rock" || typed == "Rock" {
+        return some(Move.rock)
+    }
+    if typed == "p" || typed == "P" || typed == "paper" || typed == "Paper" {
+        return some(Move.paper)
+    }
+    if typed == "s" || typed == "S" || typed == "scissors" || typed == "Scissors" {
+        return some(Move.scissors)
+    }
+    return none
+}
+
+// Which of the three the tallies expect next. `row` is the tally to read —
+// either the counts that followed this exact pair of moves, or the running
+// total when the pair has never come up before.
+func likeliest(row: [int]) -> int {
+    var best = 0
+    for n in 1..3 {
+        if row[n] > row[best] {
+            best = n
+        }
+    }
+    return best
+}
+
+print("Rock, paper, scissors. Type r, p, or s — or q to stop.")
+print("I have no dice and no random numbers. I only have what you have done.")
+print("")
+
+// counts[pair][next] — how often `next` followed each of the nine pairs of
+// moves. Nine rows because there are three moves and the pair is two of them.
+var counts: [[int]] = [
+    [0, 0, 0], [0, 0, 0], [0, 0, 0],
+    [0, 0, 0], [0, 0, 0], [0, 0, 0],
+    [0, 0, 0], [0, 0, 0], [0, 0, 0],
+]
+// How often you have played each move overall, for the turns where the pair in
+// front of me is one I have never seen.
+var totals = [0, 0, 0]
+
+// Your two most recent moves, or -1 before you have played that many.
+var lastMove = -1
+var moveBefore = -1
+
+var yourScore = 0
+var myScore = 0
+var draws = 0
+var playing = true
+
+while playing {
+    // The pair I am looking up, or -1 when there isn't one yet.
+    var pair = -1
+    if moveBefore >= 0 {
+        pair = moveBefore * 3 + lastMove
+    }
+
+    // Read the tally for that pair, falling back to the running totals while
+    // the pair is still unseen.
+    var row = totals
+    if pair >= 0 {
+        let seen = counts[pair]
+        if seen[0] + seen[1] + seen[2] > 0 {
+            row = seen
+        }
+    }
+
+    let guess = likeliest(row)
+    let mine = beatenBy(guess)
+
+    let typed = input("your move: ")
+    let yours = numberOf(readMove(typed))
+
+    if typed == "q" || typed == "Q" || typed == "quit" || typed == "" {
+        playing = false
+    } else if yours < 0 {
+        print("I know rock, paper, scissors — r, p, or s.")
+    } else {
+        print("  I played " + moveName(moveFor(mine))
+            + " — I had you down for " + moveName(moveFor(guess)) + ".")
+
+        // Same circle as beatenBy: one step ahead of mine means you win.
+        let gap = (yours - mine + 3) % 3
+        if gap == 0 {
+            draws += 1
+            print("  A draw.")
+        } else if gap == 1 {
+            yourScore += 1
+            print("  You win that one.")
+        } else {
+            myScore += 1
+            print("  Mine.")
+        }
+
+        // Remember it, then shuffle the two-move window along.
+        if pair >= 0 {
+            counts[pair][yours] += 1
+        }
+        totals[yours] += 1
+        moveBefore = lastMove
+        lastMove = yours
+
+        print("  you " + string(yourScore) + " — me " + string(myScore)
+            + " — drawn " + string(draws))
+        print("")
+    }
+}
+
+print("")
+print("Final: you " + string(yourScore) + ", me " + string(myScore)
+    + ", " + string(draws) + " drawn.")
+if myScore > yourScore {
+    print("I never rolled a die. You just have habits.")
+} else if yourScore > myScore {
+    print("You beat a table of counts. That takes doing.")
+} else {
+    print("Dead even — which is all a table of counts can manage against real chance.")
+}

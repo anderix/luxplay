@@ -1,0 +1,154 @@
+// maze.lux — a maze, dug rather than drawn, using the generator from random.lux.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// Start in a corner and walk. At every cell, look at the neighbours you have
+// not been to yet, pick one at random, knock out the wall between, and step
+// through. When you are boxed in, back up to the last cell that still had an
+// unvisited neighbour and carry on from there. Stop when the walk has been
+// everywhere.
+//
+// What comes out is a *perfect* maze: between any two cells there is exactly
+// one path, no loops and nowhere sealed off. That isn't luck. The walk only
+// ever breaks into a cell it has never stood in, so it can never close a ring,
+// and it doesn't stop until every cell has been stood in.
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same maze every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+let across = 18
+let down = 10
+
+// The picture is bigger than the maze: a wall lives *between* two cells, so
+// every cell needs a row and a column of its own plus one for the wall beside
+// it, and one more to close the far edge.
+let pictureWide = across * 2 + 1
+let pictureTall = down * 2 + 1
+
+// Cell (x, y) sits at picture position (x * 2 + 1, y * 2 + 1), and the wall
+// between two neighbouring cells is the square exactly halfway between them.
+var picture: [[string]]
+for row in 0..pictureTall {
+    var line: [string]
+    for column in 0..pictureWide {
+        line += "█"
+    }
+    picture += line
+}
+
+var beenHere: [[bool]]
+for row in 0..down {
+    var line: [bool]
+    for column in 0..across {
+        line += false
+    }
+    beenHere += line
+}
+
+// North, east, south, west — the same order in both, so one number picks a
+// direction out of either.
+let stepX = [0, 1, 0, -1]
+let stepY = [-1, 0, 1, 0]
+
+// The trail back. lux arrays grow but never shrink, so backing up doesn't
+// remove anything — `depth` says how much of the array still counts, and the
+// next push writes over whatever was abandoned above it. A stack is a marker
+// as much as it is an array.
+var trailX: [int]
+var trailY: [int]
+var depth = 0
+
+var rng = fromClock()
+var x = 0
+var y = 0
+beenHere[0][0] = true
+picture[1][1] = " "
+var carved = 1
+
+while carved < across * down {
+    // Which way could we go from here that we have not already been?
+    var choices: [int]
+    for heading in 0..4 {
+        let nextX = x + stepX[heading]
+        let nextY = y + stepY[heading]
+        if nextX >= 0 && nextX < across && nextY >= 0 && nextY < down {
+            if !beenHere[nextY][nextX] {
+                choices += heading
+            }
+        }
+    }
+
+    if length(choices) == 0 {
+        // Boxed in. Step back down the trail and try again from there.
+        depth -= 1
+        x = trailX[depth]
+        y = trailY[depth]
+    } else {
+        // Remember where we stood, then break through into a new cell.
+        if depth == length(trailX) {
+            trailX += x
+            trailY += y
+        } else {
+            trailX[depth] = x
+            trailY[depth] = y
+        }
+        depth += 1
+
+        rng = next(rng)
+        let heading = choices[below(rng, length(choices))]
+        let nextX = x + stepX[heading]
+        let nextY = y + stepY[heading]
+
+        // The wall between the two cells, and then the new cell itself.
+        picture[y * 2 + 1 + stepY[heading]][x * 2 + 1 + stepX[heading]] = " "
+        picture[nextY * 2 + 1][nextX * 2 + 1] = " "
+
+        beenHere[nextY][nextX] = true
+        x = nextX
+        y = nextY
+        carved += 1
+    }
+}
+
+// A way in at the top left and a way out at the bottom right.
+picture[1][0] = " "
+picture[pictureTall - 2][pictureWide - 1] = " "
+
+// Terminal characters are about twice as tall as they are wide, so every
+// square is printed twice over to keep the maze from looking squashed.
+for row in 0..pictureTall {
+    var line = ""
+    for column in 0..pictureWide {
+        line += picture[row][column] + picture[row][column]
+    }
+    print(line)
+}

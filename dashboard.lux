@@ -1,0 +1,194 @@
+// dashboard.lux — what this machine is doing, on one screen.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// Every other program here made its own data. This one goes and gets it, from
+// the two doors a program has onto the world outside itself: `readFile`, for
+// the files the kernel keeps in /proc that describe the machine to anyone who
+// asks, and `run`, for asking another program a question.
+//
+// Both can fail, and both say so as values rather than crashes — a Result you
+// match. So the honest thing for a report to do when it cannot read something
+// is to say which line it could not fill in, and print all the others. A
+// dashboard that dies because one number was missing is worse than one that
+// admits to a gap.
+//
+// The /proc files are Linux. On anything else the reads fail, and what you get
+// is this program saying so, line by line, which is the failure working.
+
+// Split on spaces the way a person means it: any run of them, however wide, and
+// no empty pieces at the ends. `split` alone gives one piece per separator, so
+// three spaces in a row hand back two empties nobody asked for.
+func words(line: string) -> [string] {
+    var kept: [string]
+    for piece in split(line, " ") {
+        if piece != "" {
+            kept += piece
+        }
+    }
+    return kept
+}
+
+// The line of a /proc file whose first field is this label, as its words.
+// /proc files are one fact per line, labelled — the format exists to be read
+// exactly this way.
+func fieldWords(text: string, wanted: string) -> [string] {
+    for line in split(text, "\n") {
+        let parts = words(line)
+        if length(parts) > 0 && replace(parts[0], ":", "") == wanted {
+            return parts
+        }
+    }
+    return []
+}
+
+func numberAt(parts: [string], slot: int) -> int {
+    if slot >= length(parts) {
+        return -1
+    }
+    return match parseInt(parts[slot]) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+// A bar that reads the same in any colour, which matters more than it sounds:
+// filled blocks against light ones, and the number beside it either way.
+func bar(used: int, total: int, width: int) -> string {
+    if total <= 0 {
+        return "(no reading)"
+    }
+    let filled = used * width / total
+    var drawn = ""
+    for slot in 0..width {
+        if slot < filled {
+            drawn += "█"
+        } else {
+            drawn += "░"
+        }
+    }
+    return drawn + " " + string(used * 100 / total) + "%"
+}
+
+// Kilobytes as something a person reads. Integer division throws the remainder
+// away, so the tenth is worked out from what is left over rather than lost.
+func inGigabytes(kb: int) -> string {
+    let tenths = kb * 10 / 1048576
+    return string(tenths / 10) + "." + string(tenths % 10) + "G"
+}
+
+func spellDuration(seconds: int) -> string {
+    let days = seconds / 86400
+    let hours = (seconds % 86400) / 3600
+    let minutes = (seconds % 3600) / 60
+    if days > 0 {
+        return string(days) + "d " + string(hours) + "h " + string(minutes) + "m"
+    }
+    if hours > 0 {
+        return string(hours) + "h " + string(minutes) + "m"
+    }
+    return string(minutes) + "m"
+}
+
+func readOr(path: string, fallback: string) -> string {
+    return match readFile(path) {
+        ok(let text) => text
+        err(let why) => fallback
+    }
+}
+
+// Asking another program rather than the kernel. `run` hands back a Result for
+// whether it started and a status for whether it worked, and both have to be
+// right before the answer means anything.
+func ask(program: string, arguments: [string]) -> string {
+    return match run(program, arguments) {
+        ok(let out)  => usable(out.status, out.stdout)
+        err(let why) => "(could not run " + program + ")"
+    }
+}
+
+func usable(status: int, output: string) -> string {
+    if status != 0 {
+        return "(no answer)"
+    }
+    return output
+}
+
+// Most answers are one line with a newline on the end. Taking the first piece
+// off the split is the whole of it — and the answers that are not one line, like
+// df's, must not come through here or the lines they need are gone.
+func firstLine(text: string) -> string {
+    return split(text, "\n")[0]
+}
+
+func label(name: string) -> string {
+    var padded = name
+    while length(padded) < 9 {
+        padded += " "
+    }
+    return padded
+}
+
+print("")
+print("  " + firstLine(ask("hostname", [])) + " — " + firstLine(ask("uname", ["-sr"])))
+print("  " + label("") + "─────────────────────────────────────────")
+
+// Uptime. /proc/uptime is two numbers, and the first is the seconds since boot,
+// carrying a fraction this has no use for.
+let uptimeText = readOr("/proc/uptime", "")
+let uptimeWords = words(uptimeText)
+if length(uptimeWords) > 0 {
+    let whole = split(uptimeWords[0], ".")[0]
+    print("  " + label("up") + spellDuration(numberAt([whole], 0)))
+} else {
+    print("  " + label("up") + "(could not read /proc/uptime)")
+}
+
+// Load: how many jobs wanted the processor over the last one, five, and fifteen
+// minutes. Read it against the number of cores, because 4 is a quiet machine
+// with eight of them and a struggling one with two.
+let loadWords = words(readOr("/proc/loadavg", ""))
+let cores = numberAt([firstLine(ask("nproc", []))], 0)
+if length(loadWords) >= 3 {
+    var coreNote = ""
+    if cores > 0 {
+        coreNote = "   (across " + string(cores) + " cores)"
+    }
+    print("  " + label("load") + loadWords[0] + "  " + loadWords[1] + "  "
+        + loadWords[2] + coreNote)
+} else {
+    print("  " + label("load") + "(could not read /proc/loadavg)")
+}
+
+// Memory. MemAvailable is the honest one — MemFree looks alarming on any
+// machine that is using spare memory for cache, which is every machine.
+let memText = readOr("/proc/meminfo", "")
+let memTotal = numberAt(fieldWords(memText, "MemTotal"), 1)
+let memFree = numberAt(fieldWords(memText, "MemAvailable"), 1)
+if memTotal > 0 && memFree >= 0 {
+    let used = memTotal - memFree
+    print("  " + label("memory") + bar(used, memTotal, 24)
+        + "   " + inGigabytes(used) + " of " + inGigabytes(memTotal))
+} else {
+    print("  " + label("memory") + "(could not read /proc/meminfo)")
+}
+
+// Disk, which is the one thing here no file in /proc will tell you plainly —
+// so this is the question that has to go to another program.
+let diskLines = split(ask("df", ["-P", "-k", "/"]), "\n")
+if length(diskLines) >= 2 {
+    let diskWords = words(diskLines[1])
+    let diskTotal = numberAt(diskWords, 1)
+    let diskUsed = numberAt(diskWords, 2)
+    if diskTotal > 0 && diskUsed >= 0 {
+        print("  " + label("disk") + bar(diskUsed, diskTotal, 24)
+            + "   " + inGigabytes(diskUsed) + " of " + inGigabytes(diskTotal))
+    } else {
+        print("  " + label("disk") + "(df answered in a shape this didn't expect)")
+    }
+} else {
+    print("  " + label("disk") + "(could not run df)")
+}
+
+print("")

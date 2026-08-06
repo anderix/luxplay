@@ -1,0 +1,70 @@
+// rule30.lux — a row of cells that decides its own next row, forever.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// One line of cells, each on or off. To work out a cell's next state you look
+// at three cells: itself and its two neighbours. Three cells that are each on
+// or off make eight possible neighbourhoods, and a rule is nothing more than an
+// answer for each of the eight — eight yes-or-nos, which is a number from 0 to
+// 255. That is the whole of it. There is no more machinery underneath.
+//
+// Rule 30 is the one worth staring at. It starts from a single cell and the
+// left half organises itself into stripes while the right half never repeats,
+// and nobody has been able to predict what the middle column does without
+// simply running it. Wolfram put it on the shell of a mollusc on the cover of
+// A New Kind of Science, because the mollusc got there first.
+//
+// Change `pattern` and run it again. 90 draws Sierpinski's triangle, 110 is
+// complicated enough to compute anything a computer can, and 184 models traffic
+// jams. Same twenty lines underneath all of them.
+
+let pattern = 30
+let width = 79
+let rows = 36
+
+// Which way the rule answers for one of the eight neighbourhoods. The
+// neighbourhood is read as a three-digit binary number, so it *is* the position
+// of the bit in the rule that answers it — the numbering is the lookup.
+func answerFor(rule: int, neighbourhood: int) -> int {
+    var shifted = rule
+    for step in 0..neighbourhood {
+        shifted = shifted / 2
+    }
+    return shifted % 2
+}
+
+// One cell on, in the middle, and nothing else. Everything below comes out of
+// that — which is the part worth not losing sight of.
+var cells: [int]
+for slot in 0..width {
+    cells += 0
+}
+cells[width / 2] = 1
+
+print("rule " + string(pattern) + ", from a single cell")
+print("")
+
+for generation in 0..rows {
+    var line = ""
+    for slot in 0..width {
+        if cells[slot] == 1 {
+            line += "█"
+        } else {
+            line += " "
+        }
+    }
+    print(line)
+
+    // The row's ends are treated as neighbours of each other, so the line is
+    // really a ring. Something has to be off the edge, and a ring is the choice
+    // that invents the least.
+    var nextCells: [int]
+    for slot in 0..width {
+        let left = cells[(slot + width - 1) % width]
+        let centre = cells[slot]
+        let right = cells[(slot + 1) % width]
+        nextCells += answerFor(pattern, left * 4 + centre * 2 + right)
+    }
+    cells = nextCells
+}

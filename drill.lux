@@ -1,0 +1,172 @@
+// drill.lux — times tables, timed, with a note at the end of which ones to
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// look at again.
+//
+//   lux run drill.lux          ten questions, mixed, from 2×2 to 12×12
+//   lux run drill.lux 7        ten questions, all of them sevens
+//   lux run drill.lux 7 20     twenty of them
+//
+// The clock comes from `date`, asked once before each question and once after.
+// Starting another program takes a few thousandths of a second, so the times
+// here are a little long — which does not matter when the thing being measured
+// is a child thinking, and would matter enormously if it were code.
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => Random(seed: 1)
+    }
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// Nanoseconds since 1970, which is far too big a number for anything here
+// except subtracting one from another.
+func nowNanos() -> int {
+    return match run("date", ["+%s%N"]) {
+        ok(let out)  => wholeNumber(out.stdout)
+        err(let why) => -1
+    }
+}
+
+func wholeNumber(printed: string) -> int {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+func numberFrom(text: string) -> int {
+    return match parseInt(replace(text, " ", "")) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+// Thousandths of a second, shown as seconds and a tenth.
+func spellSeconds(millis: int) -> string {
+    let tenths = millis / 100
+    return string(tenths / 10) + "." + string(tenths % 10) + "s"
+}
+
+func settingFrom(given: [string], slot: int, fallback: int, low: int, high: int) -> int {
+    if slot >= length(given) {
+        return fallback
+    }
+    let asked = numberFrom(given[slot])
+    if asked < low || asked > high {
+        return fallback
+    }
+    return asked
+}
+
+let given = args()
+let table = settingFrom(given, 1, 0, 2, 12)
+let questions = settingFrom(given, 2, 10, 1, 100)
+
+var rng = fromClock()
+var asked = 0
+var correct = 0
+var totalMillis = 0
+var lastFirst = -1
+var lastSecond = -1
+var missedFirst: [int]
+var missedSecond: [int]
+var going = true
+
+if table > 0 {
+    print("The " + string(table) + " times table — " + string(questions) + " questions.")
+} else {
+    print("Times tables, mixed, 2 to 12 — " + string(questions) + " questions.")
+}
+print("Type the answer, or q to stop.")
+print("")
+
+while going && asked < questions {
+    rng = next(rng)
+    var first = table
+    if table == 0 {
+        first = 2 + below(rng, 11)
+        rng = next(rng)
+    }
+    var second = 2 + below(rng, 11)
+    // The generator is even-handed, and even-handed means the same question
+    // sometimes lands twice running. That is fair and it is also a poor
+    // question, so one redraw pushes it along without pretending the first
+    // answer was wrong.
+    if first == lastFirst && second == lastSecond {
+        rng = next(rng)
+        second = 2 + below(rng, 11)
+    }
+    lastFirst = first
+    lastSecond = second
+    let answer = first * second
+
+    let startedAt = nowNanos()
+    let typed = input("  " + string(first) + " × " + string(second) + " = ")
+    let finishedAt = nowNanos()
+
+    if replace(typed, " ", "") == "q" || replace(typed, " ", "") == "Q" || typed == "" {
+        going = false
+    } else {
+        asked += 1
+        // A clock that failed to read twice cannot time anything, so it counts
+        // as no time at all rather than as nonsense.
+        var tookMillis = 0
+        if startedAt > 0 && finishedAt > startedAt {
+            tookMillis = (finishedAt - startedAt) / 1000000
+        }
+        totalMillis += tookMillis
+
+        if numberFrom(typed) == answer {
+            correct += 1
+            print("    yes — " + spellSeconds(tookMillis))
+        } else {
+            missedFirst += first
+            missedSecond += second
+            print("    no — " + string(first) + " × " + string(second) + " = " + string(answer))
+        }
+    }
+}
+
+print("")
+if asked == 0 {
+    print("Nothing attempted.")
+} else {
+    print(string(correct) + " correct out of " + string(asked) + ", in "
+        + spellSeconds(totalMillis) + " — about " + spellSeconds(totalMillis / asked)
+        + " a question.")
+
+    if length(missedFirst) > 0 {
+        var again = ""
+        for slot in 0..length(missedFirst) {
+            if slot > 0 {
+                again += ", "
+            }
+            again += string(missedFirst[slot]) + "×" + string(missedSecond[slot])
+        }
+        print("Worth another look: " + again + ".")
+    } else if asked >= 5 {
+        print("All of them. Try a harder table, or ask for more of them.")
+    }
+}

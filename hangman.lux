@@ -1,0 +1,178 @@
+// hangman.lux — the old paper game, with the word drawn from random.lux.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+// The words are spelled out as arrays of letters rather than written as plain
+// strings, and that is not a stylistic choice. lux can measure a string and
+// search inside one, but it cannot hand you the third character of it, and a
+// row of blanks is nothing but a walk over the characters one at a time. So
+// the word becomes what it already was underneath — a sequence of letters —
+// and the game is an ordinary loop over an array.
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same word every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// Is this letter somewhere in that list? One question asked three times over —
+// of the letters already guessed, of the word, and of the alphabet — and an
+// array with a loop over it is what a language with no lookup table gives you.
+func holds(letters: [string], letter: string) -> bool {
+    for candidate in letters {
+        if candidate == letter {
+            return true
+        }
+    }
+    return false
+}
+
+// The word as the player sees it: letters they have found, blanks for the rest.
+func blanks(word: [string], guesses: [string]) -> string {
+    var shown = ""
+    for letter in word {
+        if holds(guesses, letter) {
+            shown += letter + " "
+        } else {
+            shown += "_ "
+        }
+    }
+    return shown
+}
+
+func solved(word: [string], guesses: [string]) -> bool {
+    for letter in word {
+        if !holds(guesses, letter) {
+            return false
+        }
+    }
+    return true
+}
+
+// Matching on a plain int, unlike an enum, can never be exhaustive — there is
+// always another int — so `_` catches the rest.
+func gallows(livesLeft: int) -> string {
+    return match livesLeft {
+        6 => "  +---+\n  |   |\n      |\n      |\n      |\n      |\n======="
+        5 => "  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n======="
+        4 => "  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n======="
+        3 => "  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n======="
+        2 => "  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n======="
+        1 => "  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n======="
+        _ => "  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n======="
+    }
+}
+
+// lux has no way to lower-case a letter, so the alphabet is written out twice
+// and the pairing between the two rows is the conversion. Two arrays lined up
+// like this is what a lookup table looks like in a language without one.
+func lowered(typed: string, small: [string], capital: [string]) -> string {
+    for slot in 0..length(capital) {
+        if capital[slot] == typed {
+            return small[slot]
+        }
+    }
+    return typed
+}
+
+let small = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+             "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]
+let capital = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+               "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
+
+let words: [[string]] = [
+    ["a", "v", "a", "l", "a", "n", "c", "h", "e"],
+    ["b", "a", "n", "j", "o"],
+    ["c", "o", "m", "p", "i", "l", "e", "r"],
+    ["d", "r", "a", "w", "b", "r", "i", "d", "g", "e"],
+    ["e", "c", "l", "i", "p", "s", "e"],
+    ["f", "o", "s", "s", "i", "l"],
+    ["g", "l", "a", "c", "i", "e", "r"],
+    ["h", "a", "r", "b", "o", "u", "r"],
+    ["j", "u", "g", "g", "l", "e"],
+    ["k", "r", "y", "p", "t", "o", "n"],
+    ["l", "a", "n", "t", "e", "r", "n"],
+    ["m", "a", "r", "z", "i", "p", "a", "n"],
+    ["o", "r", "c", "h", "a", "r", "d"],
+    ["p", "e", "n", "g", "u", "i", "n"],
+    ["q", "u", "a", "r", "r", "y"],
+    ["s", "e", "m", "a", "p", "h", "o", "r", "e"],
+    ["t", "y", "p", "h", "o", "o", "n"],
+    ["w", "a", "l", "r", "u", "s"],
+]
+
+var rng = next(fromClock())
+let word = words[below(rng, length(words))]
+
+var guesses: [string]
+var lives = 6
+var playing = true
+
+print("Hangman. One letter at a time, six wrong guesses and you're done.")
+print("")
+
+while playing {
+    print(gallows(lives))
+    print("  " + blanks(word, guesses))
+
+    if solved(word, guesses) {
+        print("")
+        print("You got it, with " + string(lives) + " to spare.")
+        playing = false
+    } else if lives <= 0 {
+        var answer = ""
+        for letter in word {
+            answer += letter
+        }
+        print("")
+        print("Out of guesses. The word was " + answer + ".")
+        playing = false
+    } else {
+        let typed = input("  letter: ")
+        let letter = lowered(typed, small, capital)
+
+        if typed == "" {
+            print("  (giving up)")
+            playing = false
+        } else if length(typed) != 1 || !holds(small, letter) {
+            print("  One letter, a to z.")
+        } else if holds(guesses, letter) {
+            print("  You've had " + letter + " already.")
+        } else {
+            guesses += letter
+            if holds(word, letter) {
+                print("  Yes — there's a " + letter + ".")
+            } else {
+                lives -= 1
+                print("  No " + letter + ". " + string(lives) + " left.")
+            }
+        }
+        print("")
+    }
+}

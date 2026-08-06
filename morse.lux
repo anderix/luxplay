@@ -1,0 +1,122 @@
+// morse.lux — text to Morse and back.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run morse.lux hello world
+//   lux run morse.lux -d ".... . .-.. .-.. ---"
+//   lux run morse.lux                            (a round trip, to show it works)
+//
+// The interesting part is that lux cannot hand you one character out of a
+// string, which is how you would write this in any other language: walk the
+// text, look each letter up, glue the codes together. That door is shut, so
+// the program goes the other way round. Encoding replaces every occurrence of
+// a letter in the whole string at once, thirty-six passes over the text rather
+// than one pass over the alphabet. Decoding needs no characters at all —
+// Morse arrives already cut into pieces by its spaces, and `split` takes it
+// apart along them.
+//
+// Neither direction is the obvious one, and neither is worse for it.
+
+let small = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+             "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+             "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+let capital = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+               "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+               "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+let codes = [".-", "-...", "-.-.", "-..", ".", "..-.", "--.", "....", "..",
+             ".---", "-.-", ".-..", "--", "-.", "---", ".--.", "--.-", ".-.",
+             "...", "-", "..-", "...-", ".--", "-..-", "-.--", "--..",
+             "-----", ".----", "..---", "...--", "....-", ".....", "-....",
+             "--...", "---..", "----."]
+
+// Spaces first, while they still mean what they mean. Once the letters have
+// become dots and dashes the text is full of spaces that are only separators,
+// and the ones that divided the words would be lost among them. A slash is the
+// old telegraphist's mark for a word break, and it survives the replacing
+// because no letter's code contains one.
+func toMorse(text: string, plain: [string], caps: [string], dits: [string]) -> string {
+    var working = replace(text, " ", " / ")
+    for slot in 0..length(plain) {
+        working = replace(working, plain[slot], dits[slot] + " ")
+        working = replace(working, caps[slot], dits[slot] + " ")
+    }
+    return tidy(working)
+}
+
+// Every code was laid down with a space after it, and the word breaks arrived
+// with spaces of their own, so the result has doubles in it. Splitting on
+// spaces and rebuilding with exactly one is the cheapest way to say "however
+// many, treat them as one".
+func tidy(text: string) -> string {
+    var out = ""
+    for piece in split(text, " ") {
+        if piece != "" {
+            if out != "" {
+                out += " "
+            }
+            out += piece
+        }
+    }
+    return out
+}
+
+func fromMorse(signal: string, plain: [string], dits: [string]) -> string {
+    var out = ""
+    for piece in split(signal, " ") {
+        if piece == "/" {
+            out += " "
+        } else if piece != "" {
+            out += letterFor(piece, plain, dits)
+        }
+    }
+    return out
+}
+
+// A code nobody sent is not a crash — it is a question mark, the same answer a
+// listener gives.
+func letterFor(dit: string, plain: [string], dits: [string]) -> string {
+    for slot in 0..length(dits) {
+        if dits[slot] == dit {
+            return plain[slot]
+        }
+    }
+    return "?"
+}
+
+func restOfLine(words: [string], from: int) -> string {
+    var joined = ""
+    for slot in from..length(words) {
+        if slot > from {
+            joined += " "
+        }
+        joined += words[slot]
+    }
+    return joined
+}
+
+let given = args()
+
+if length(given) < 2 {
+    // Nothing asked for, so show the thing working rather than a usage screen
+    // nobody reads: send a sentence one way and bring it back the other.
+    let sample = "lux is fun"
+    let sent = toMorse(sample, small, capital, codes)
+    print("  " + sample)
+    print("  " + sent)
+    print("  " + fromMorse(sent, small, codes))
+    print("")
+    print("  lux run morse.lux hello world")
+    print("  lux run morse.lux -d \".... . .-.. .-.. ---\"")
+} else if given[1] == "-d" || given[1] == "decode" {
+    let signal = restOfLine(given, 2)
+    if signal == "" {
+        print("Decode what? lux run morse.lux -d \".... .\"")
+    } else {
+        print(fromMorse(signal, small, codes))
+    }
+} else {
+    print(toMorse(restOfLine(given, 1), small, capital, codes))
+}

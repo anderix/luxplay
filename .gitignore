@@ -1,0 +1,20 @@
+# What todo.lux writes when you use it
+todo.txt
+
+# What lux build leaves behind: a native binary named after its program
+dashboard
+drill
+hangman
+mandelbrot
+maze
+morse
+poker
+random
+rps
+rule30
+todo
+
+# Generated translations, if you convert in place
+*.rs
+*.go
+*.swift
