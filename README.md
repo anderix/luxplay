@@ -128,6 +128,30 @@ before and after each question, which costs a few thousandths of a second per
 reading — irrelevant when what is being measured is a child thinking, and fatal
 if it were code.
 
+`runes.lux` writes English in Tolkien's runes and reads it back. Not
+translation — transliteration, one mark at a time, which is exactly what the
+runes on Thror's map are: ordinary English that Bilbo's readers decode from the
+chart on the compass rose. Tolkien did not invent the letters; he took the
+Anglo-Saxon futhorc and wrote modern English in it. The output is the real
+Unicode runic block from U+16A0 up, so the characters are the characters and
+will paste into anything that can show them.
+
+Run it with no arguments and it checks itself rather than demonstrating itself.
+The dust jacket of The Hobbit carries a full line of Tolkien's own runes, so
+that line is in the source, and the program transliterates the same words and
+compares. It matches rune for rune — including the doubled ᚳᚳ Tolkien used for
+the "ck" in BACK, which is his spelling rather than a letter of the alphabet.
+That reading is where the mapping for TH, E, H, O, B, I, T, R, A, N, D, G and
+the word separator comes from; the digraph runes for EE, OO, EA and ST, and
+calc for K, follow the futhorc's own values, and the source marks which is
+which.
+
+The ordering of the chart is the whole program. Each replacement sweeps the
+entire text, so a piece containing another piece has to be tried first — "th"
+before "t" and "h", or THE comes out three runes long. The same order run
+backwards does the decoding, where ᚳᚳ must be read as "ck" before ᚳ is read as
+"c". Two arrays whose sequence carries as much meaning as their contents.
+
 Three limits shaped these more than anything else, and each one left a mark
 worth reading. lux cannot hand you a single character out of a string, so
 hangman's words are written as arrays of letters — which is what a word is
