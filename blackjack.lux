@@ -30,7 +30,7 @@
 // downward and every answer rests on answers already worked out — which is the
 // same trick as the dealer's own table, built the same way just above it.
 //
-// One honest simplification. The probabilities come from what is genuinely left
+// One simplification, stated rather than buried. The probabilities come from what is left
 // in the shoe, so they shift as the shoe wears down, but the tree treats each
 // draw as independent rather than tracking the deck through every branch of
 // itself. Over six decks the difference is far smaller than the third decimal
@@ -181,8 +181,8 @@ func twoCard(a: int, b: int) -> Total {
 
 // ---------- the shoe ----------
 
-// Six decks, and the shoe is not shuffled between hands. That is the whole
-// reason the tutor's numbers move as you play: what is left to come genuinely
+// Six decks, and the shoe is not shuffled between hands. That is why the tutor's
+// numbers move as you play: what is left to come genuinely
 // changes, and the arithmetic is done against what is left rather than against
 // a fresh deck.
 
@@ -417,7 +417,7 @@ func dealerChances(up: int, d: Dealer, p: [float]) -> [float] {
 // All three answers are in chips per chip staked. Standing on twenty is worth
 // about seventy hundredths: bet ten and you expect seven back on top. Standing
 // on sixteen against a ten is worth about minus fifty-four, and hitting it is
-// worth about minus fifty-one, which is the whole of why you hit.
+// worth about minus fifty-one, which is why you hit.
 
 func standValue(total: int, dealer: [float]) -> float {
     if total > 21 {
@@ -577,8 +577,7 @@ func advise(standNow: float, hitNow: float, doubleNow: float, canDouble: bool, b
     }
 
     // Within a hundredth of a chip either way the choice is not worth marking,
-    // and saying so is more honest than pretending the third decimal place is
-    // advice.
+    // and saying so beats pretending the third decimal place is advice.
     let close = 0.01
 
     if canDouble && doubleNow == top {
@@ -797,7 +796,7 @@ while playing && chipsHeld >= bet {
             if insured {
                 // Two to one on the side bet, and the side bet itself back.
                 // Taking it against a dealer blackjack is exactly break-even
-                // on the hand, which is the whole of its appeal.
+                // on the hand, which is where its appeal comes from.
                 chipsHeld += bet + bet / 2
                 print("  Insurance pays " + string(bet) + ", and your "
                     + string(bet / 2) + " back.")

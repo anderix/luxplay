@@ -1151,8 +1151,8 @@ func betReadNote(style: Style) -> string {
     return "Read that number carefully: it is how you do against any two cards, and a bot that just bet is not holding any two cards."
 }
 
-// The advice, which is the whole point: a call is worth making when it wins
-// more often than it has to.
+// The advice, which is what the rest of this is for: a call is worth making when
+// it wins more often than it has to.
 //
 // One function decides and hands back both halves — the move it would make and
 // the words for it. Splitting those in two would let the sentence you read and
@@ -1236,7 +1236,7 @@ func suggest(equity: int, need: int, toCall: int, canRaise: bool, style: Style) 
 }
 
 // A bot whose call margin is below zero pays past the price it is offered,
-// which is the whole of what "calls too much" means.
+// which is all that "calls too much" means here.
 func callsTooMuch(style: Style) -> bool {
     return style.callMargin < 0
 }

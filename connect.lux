@@ -5,17 +5,16 @@
 //
 //   lux run connect.lux
 //
-// Drop a piece into a column, four in a row wins, and the whole game is that.
-// What is worth watching is the bot.
+// Drop a piece into a column, four in a row wins, and there is no more to it
+// than that. What is worth watching is the bot.
 //
 // It has no book of openings and no rules about what a good move looks like. It
 // plays the game out in its head: every column it could drop into, every column
 // you could answer with, every column it could answer that with, and so on down
 // to whatever depth it has been given. At the bottom of all that it scores the
 // position, and then it walks the answers back up on the assumption that you
-// will always pick the one worst for it. That assumption is the whole idea, and
-// it is why the bot never hopes: it will not set a trap that only works if you
-// miss it.
+// will always pick the one worst for it. Assuming that is why the bot never
+// hopes: it will not set a trap that only works if you miss it.
 //
 // Difficulty is not a different bot. It is the same search told to stop sooner.
 // The easy one looks two moves ahead, which is enough to take a win it is handed
@@ -43,7 +42,7 @@
 // confident view of a position it understands no better. It is called the
 // odd-even effect and every engine with a rough evaluator has some of it.
 //
-// The honest fix is a better guess at the bottom rather than a deeper search
+// The fix is a better guess at the bottom rather than a deeper search
 // above it — which is worth knowing, because "just look further ahead" is the
 // first thing anybody reaches for and it is not always an improvement.
 //
@@ -404,7 +403,7 @@ func search(board: [int], toMove: int, me: int, depth: int, alpha: int, beta: in
 // What one move leads to. A move that wins ends the line there and then; a move
 // that does not hands the position over and asks the same question of the other
 // player, one level shallower. This and search call each other all the way down,
-// and the pair of them is the whole engine.
+// and there is no third thing.
 func valueAfter(after: [int], col: int, row: int, toMove: int, me: int, depth: int, alpha: int, beta: int, filled: int) -> int {
     if wins(after, col, row, toMove) {
         if toMove == me {
@@ -555,7 +554,7 @@ func chooseLevel() -> Level {
 
 // The same search, run on your behalf and read out. Not a different, kinder
 // engine — the number beside each column is exactly what the bot would think of
-// that move if it were yours, which is the only honest kind of hint.
+// that move if it were yours, which is the only kind of hint worth giving.
 func hintWord(value: int) -> string {
     if value > 50000 {
         return "wins"

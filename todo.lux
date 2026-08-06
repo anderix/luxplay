@@ -4,8 +4,8 @@
 // Built with AI assistance (Claude, Anthropic)
 //
 // Every program before this one forgot everything the moment it stopped. This
-// one keeps a file, and that is the whole difference between a program and an
-// app: somewhere to put what you did so that next time you can pick it up.
+// one keeps a file, which is what separates a program from an app: somewhere to
+// put what you did so that next time you can pick it up.
 //
 //   lux run todo.lux                  what's on the list
 //   lux run todo.lux add buy milk     put something on it

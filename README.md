@@ -38,7 +38,7 @@ worth folding at one price is worth calling at another.
 The equity engine is checked rather than trusted. A made royal flush returns
 exactly 100%, an ace-high straight lying on the board returns a thousand ties
 out of a thousand, and pocket aces against one unknown hand come back at 85.0%
-against a published 85.2%. That last case sets the honest limit: at these trial
+against a published 85.2%. That last case sets the limit: at these trial
 counts the answer is good to about half a percent, which is why the tutor quotes
 whole numbers and says "about". The tutor also says out loud what its own number
 leaves out — equity against *any two cards* is not equity against the hand of
@@ -69,7 +69,7 @@ when worse hands get called — and tells you to stop bluffing, because a bluff
 against something that never folds is money handed over. Against the bot that
 bluffs one hand in four it says the opposite: its bet is less news than it looks.
 That is the half of poker a pot-odds calculation leaves out, and having three
-opponents to feel the difference against is the only honest way to teach it.
+opponents to feel the difference against is the only way to teach it.
 
 When you leave, it tells you how you played. Every decision is scored against
 the advice that was on the screen when you made it — how many matched, how often

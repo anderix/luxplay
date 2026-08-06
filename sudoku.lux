@@ -23,8 +23,8 @@
 // Both numbers are printed at the end — how many values each solver wrote down,
 // and how many it had to take back. Over twenty-five generated puzzles the plain
 // solver averaged 3,795 values written and the careful one 95, which is forty
-// times fewer for a difference of about ten lines, and is the whole reason the
-// phrase "most constrained variable" is worth knowing. It also comes with a cost, which the program is careful to
+// times fewer for a difference of about ten lines, and is why the phrase "most
+// constrained variable" is worth knowing. It also comes with a cost, which the program is careful to
 // show rather than hide: finding the most constrained square means looking at
 // every square, so the better solver does more work per step and still wins by
 // a distance. That trade — cheaper steps against fewer of them — is most of

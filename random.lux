@@ -76,7 +76,7 @@ for turn in 0..12 {
 }
 print("twelve rolls of a die:", roll)
 
-// Counting what comes up is the only honest way to look at a generator: over
+// Counting what comes up is the only way to look at a generator: over
 // enough rolls every face should land near a sixth of the total.
 var faces = [0, 0, 0, 0, 0, 0]
 let throws = 60000

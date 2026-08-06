@@ -116,7 +116,7 @@ func daysInMonth(year: int, month: int) -> int {
 // and fourteenth of the year before, so that February's changing length lands at
 // the end of the year where nothing has to be counted past it.
 //
-// The 13 * (m + 1) / 5 is the whole trick. From March the months run 31, 30, 31,
+// The 13 * (m + 1) / 5 is where the work happens. From March the months run 31, 30, 31,
 // 30, 31, 31, 30, 31, 30, 31 days, and that pattern advances the weekday by an
 // amount which, summed up, happens to be exactly what integer division by five
 // produces. It is not a coincidence so much as an observation somebody made once
@@ -343,8 +343,8 @@ if length(given) >= 4 {
     print("  repeats exactly:")
     print("")
     // Bars drawn from the smallest count rather than from zero. Seven bars of
-    // roughly six hundred and eighty are seven identical bars; the whole story
-    // is in the last few, so that is where the chart starts.
+    // roughly six hundred and eighty are seven identical bars, and the differences
+    // are what there is to see, so that is where the chart starts.
     for day in 0..7 {
         var bar = ""
         for step in 0..counts[day] - counts[bottom] {

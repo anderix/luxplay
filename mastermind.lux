@@ -20,9 +20,9 @@
 //
 // So the program keeps the list of every code still consistent with everything
 // you have said, and after each answer it throws away the ones that would have
-// scored differently. That list is the entire mind of the thing. It has no
-// theory about your code and no idea which colours you like; it knows only what
-// has not yet been ruled out, which is why it can tell you exactly how many
+// scored differently. That list is all it thinks with. It has no theory about
+// your code and no idea which colours you like; it knows only what has not yet
+// been ruled out, which is why it can tell you exactly how many
 // codes are still alive after each guess.
 //
 // Choosing what to guess next is the part with a decision in it. Every possible
@@ -33,14 +33,20 @@
 // very bad. So the program picks the guess whose largest group is smallest,
 // which is to say it plays against its own worst case rather than hoping.
 //
-// Played that way against all 1296 codes it never needs more than five guesses
-// and averages 4.4. Five is also the best anybody has managed: Knuth proved in
-// 1977 that no strategy can guarantee four, and the proof is that he checked.
+// There is one deliberate limit, and it is worth stating with its price
+// attached rather than buried. This program only ever guesses codes that are
+// still possible, which is easy to explain and easy to trust, and it is not
+// quite the best play, because sometimes the most informative thing you can say
+// is a code you already know is wrong. Being right is not the point of a guess.
+// Finding out is.
 //
-// One honest limit. This program only ever guesses codes that are still
-// possible, which is easy to explain and slightly worse than the best play.
-// Sometimes the most informative thing to say is a code you already know is
-// wrong, because being right is not the point of a guess — finding out is.
+// Played against all 1296 codes, that limit costs one guess in the worst case.
+// This strategy solves 1,252 of them within five guesses and the remaining 44 in
+// six, averaging 4.47. Knuth showed in 1977 that allowing guesses you know to be
+// wrong brings the worst case down to five, and that five is the floor — no
+// strategy can promise four. So the cost of only ever saying things that might
+// be true is those 44 codes, which is a fair price for a program somebody can
+// read.
 
 // ---------- the generator, from random.lux ----------
 

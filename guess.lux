@@ -11,8 +11,8 @@
 // low, and it will have your number out of a hundred in seven questions and out
 // of a million in twenty.
 //
-// Twenty questions for a million numbers is the whole point of the program, and
-// it is not a trick. Each answer you give throws away half of what was left. A
+// Twenty questions for a million numbers is what the program is for, and it is
+// not a trick. Each answer you give throws away half of what was left. A
 // hundred numbers becomes fifty, then twenty-five, then thirteen, seven, four,
 // two, one — seven questions, and it does not matter which number you picked or
 // how cleverly you picked it. There is nowhere in the range that is harder to

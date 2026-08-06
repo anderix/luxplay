@@ -33,8 +33,8 @@
 // this follows, and the map spells THRUSH and SHINE with a plain S and H.)
 //
 // Tolkien's mode is orthographic — one rune per letter, whatever it sounds like
-// — with a handful of deliberate exceptions, and the exceptions are the whole
-// interest of the thing:
+// — with a handful of deliberate exceptions, and the exceptions are where it
+// gets interesting:
 //
 //   J is written with the same rune as I, and V with the same rune as U. Old
 //   English had no need to tell those pairs apart, and Tolkien did not add runes
@@ -204,8 +204,8 @@ if length(given) < 2 {
     }
     print("")
     // Reading Tolkien's line back gives "bacc", because the transcription
-    // really does have two cens in it. The chart is being honest about what it
-    // was handed rather than quietly correcting it.
+    // really does have two cens in it. The chart reports what it was handed
+    // rather than quietly correcting it.
     print("  and his line read back: " + toEnglish(jacketRunes, pieces, marks))
     print("")
     print("  lux run runes.lux stand by the grey stone")

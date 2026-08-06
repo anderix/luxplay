@@ -18,7 +18,7 @@
 // comes back tomorrow, box two in two days, then four, then eight, then
 // sixteen. So a word you know well is asked about three times a month and a word
 // you keep losing is asked about every day, without you having to decide which
-// is which — getting it wrong is the whole of the sorting mechanism.
+// is which. Getting it wrong is what does the sorting.
 //
 // This is the Leitner system, named for the journalist who described it in
 // 1972, and the arithmetic underneath it is older than that: things are
@@ -104,8 +104,8 @@ func boxes() -> int {
     return 5
 }
 
-// How long a card in each box is left alone. Doubling, which is the whole
-// schedule: one day, two, four, eight, sixteen.
+// How long a card in each box is left alone. The schedule is a doubling and
+// nothing else: one day, two, four, eight, sixteen.
 func daysFor(box: int) -> int {
     var span = 1
     for step in 1..box {
@@ -370,7 +370,7 @@ func trimmed(typed: string) -> string {
 }
 
 // "yes", "no", "stop", or "" for anything else. Enter on its own means yes,
-// because the honest answer to "did you get it" is usually yes and the tiring
+// because the answer to "did you get it" is usually yes and the tiring
 // part of a review is the typing.
 func gotIt(typed: string) -> string {
     let plain = trimmed(typed)

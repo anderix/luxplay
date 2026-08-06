@@ -7,7 +7,7 @@
 // at three cells: itself and its two neighbours. Three cells that are each on
 // or off make eight possible neighbourhoods, and a rule is nothing more than an
 // answer for each of the eight — eight yes-or-nos, which is a number from 0 to
-// 255. That is the whole of it. There is no more machinery underneath.
+// 255. There is no more machinery underneath.
 //
 // Rule 30 is the one worth staring at. It starts from a single cell and the
 // left half organises itself into stripes while the right half never repeats,

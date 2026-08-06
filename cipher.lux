@@ -134,7 +134,7 @@ func isLetter(mark: int) -> bool {
 // ---------- the shift cipher ----------
 
 // Every letter moved along by the same amount, wrapping round at z. Adding
-// twenty-six before the remainder keeps a negative shift honest, since a
+// twenty-six before the remainder keeps a negative shift in range, since a
 // remainder in lux takes the sign of what went into it.
 func shifted(chars: [int], by: int) -> [int] {
     var out = chars

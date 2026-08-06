@@ -9,7 +9,7 @@
 // asks, and `run`, for asking another program a question.
 //
 // Both can fail, and both say so as values rather than crashes — a Result you
-// match. So the honest thing for a report to do when it cannot read something
+// match. So what a report should do when it cannot read something
 // is to say which line it could not fill in, and print all the others. A
 // dashboard that dies because one number was missing is worse than one that
 // admits to a gap.
@@ -116,7 +116,7 @@ func usable(status: int, output: string) -> string {
 }
 
 // Most answers are one line with a newline on the end. Taking the first piece
-// off the split is the whole of it — and the answers that are not one line, like
+// off the split is all it takes, and the answers that are not one line, like
 // df's, must not come through here or the lines they need are gone.
 func firstLine(text: string) -> string {
     return split(text, "\n")[0]
@@ -161,7 +161,7 @@ if length(loadWords) >= 3 {
     print("  " + label("load") + "(could not read /proc/loadavg)")
 }
 
-// Memory. MemAvailable is the honest one — MemFree looks alarming on any
+// Memory. MemAvailable is the number to use; MemFree looks alarming on any
 // machine that is using spare memory for cache, which is every machine.
 let memText = readOr("/proc/meminfo", "")
 let memTotal = numberAt(fieldWords(memText, "MemTotal"), 1)
