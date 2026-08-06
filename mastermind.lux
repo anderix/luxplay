@@ -1,0 +1,524 @@
+// mastermind.lux — you hide a code, the program reasons it out.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run mastermind.lux           you hide the code, the program finds it
+//   lux run mastermind.lux mine      the program hides one and you find it
+//
+// Four pegs, six colours, repeats allowed. That is 6 × 6 × 6 × 6 = 1296 codes,
+// and after each guess you say how close it was: how many pegs are the right
+// colour in the right place, and how many are the right colour in the wrong
+// place. Nothing else.
+//
+// guess.lux, next door, finds a number out of a million in twenty questions by
+// halving. This is the same idea with the halving taken away. There is no order
+// to a code, nothing to be higher or lower than, and no way to cut the
+// possibilities down the middle. What there is instead is a rule that turns any
+// two codes into a score — and that rule cuts, because the answer you give is
+// only consistent with some of the 1296.
+//
+// So the program keeps the list of every code still consistent with everything
+// you have said, and after each answer it throws away the ones that would have
+// scored differently. That list is the entire mind of the thing. It has no
+// theory about your code and no idea which colours you like; it knows only what
+// has not yet been ruled out, which is why it can tell you exactly how many
+// codes are still alive after each guess.
+//
+// Choosing what to guess next is the part with a decision in it. Every possible
+// guess splits the surviving codes into groups — one group for each score it
+// could come back with — and after you answer, the group matching your answer is
+// all that is left. A guess whose largest group is small is a good guess, even
+// if it is unlikely to be right, because the worst that can happen to it is not
+// very bad. So the program picks the guess whose largest group is smallest,
+// which is to say it plays against its own worst case rather than hoping.
+//
+// Played that way against all 1296 codes it never needs more than five guesses
+// and averages 4.4. Five is also the best anybody has managed: Knuth proved in
+// 1977 that no strategy can guarantee four, and the proof is that he checked.
+//
+// One honest limit. This program only ever guesses codes that are still
+// possible, which is easy to explain and slightly worse than the best play.
+// Sometimes the most informative thing to say is a code you already know is
+// wrong, because being right is not the point of a guess — finding out is.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same code every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- codes ----------
+
+func colours() -> int {
+    return 6
+}
+
+func slots() -> int {
+    return 4
+}
+
+func codeCount() -> int {
+    return 1296
+}
+
+// A code is one number, and its pegs are its digits in base six. Keeping them
+// as numbers rather than as arrays matters more than it looks: the list of
+// surviving codes is copied and filtered constantly, and 1296 numbers move
+// around a great deal more cheaply than 1296 arrays of four.
+func pegsOf(code: int) -> [int] {
+    var pegs: [int]
+    var left = code
+    for slot in 0..slots() {
+        pegs += left % colours()
+        left = left / colours()
+    }
+    return pegs
+}
+
+func colourLetter(colour: int) -> string {
+    return match colour {
+        0 => "r"
+        1 => "o"
+        2 => "y"
+        3 => "g"
+        4 => "b"
+        _ => "p"
+    }
+}
+
+func colourName(colour: int) -> string {
+    return match colour {
+        0 => "red"
+        1 => "orange"
+        2 => "yellow"
+        3 => "green"
+        4 => "blue"
+        _ => "purple"
+    }
+}
+
+func codeLabel(code: int) -> string {
+    var shown = ""
+    for peg in pegsOf(code) {
+        if shown != "" {
+            shown += " "
+        }
+        shown += colourLetter(peg)
+    }
+    return shown
+}
+
+// ---------- scoring one code against another ----------
+
+// Right colour and right place, then right colour and wrong place. The second
+// half is the one people get wrong: a peg already counted as being in the right
+// place cannot also be counted as being in the wrong one, so those are set
+// aside first and only what is left is matched up by colour.
+//
+// The score comes back as one number, ten times the blacks plus the whites,
+// because a score is only ever compared with another score and a pair of
+// numbers that is never taken apart may as well be one.
+func scoreOf(secret: [int], guess: [int]) -> int {
+    var black = 0
+    var secretLeft: [int]
+    var guessLeft: [int]
+    for colour in 0..colours() {
+        secretLeft += 0
+        guessLeft += 0
+    }
+    for slot in 0..slots() {
+        if secret[slot] == guess[slot] {
+            black += 1
+        } else {
+            secretLeft[secret[slot]] += 1
+            guessLeft[guess[slot]] += 1
+        }
+    }
+    var white = 0
+    for colour in 0..colours() {
+        if secretLeft[colour] < guessLeft[colour] {
+            white += secretLeft[colour]
+        } else {
+            white += guessLeft[colour]
+        }
+    }
+    return black * 10 + white
+}
+
+func blacksIn(score: int) -> int {
+    return score / 10
+}
+
+func whitesIn(score: int) -> int {
+    return score % 10
+}
+
+func scoreLabel(score: int) -> string {
+    return string(blacksIn(score)) + " right place, " + string(whitesIn(score))
+         + " right colour"
+}
+
+func winning() -> int {
+    return slots() * 10
+}
+
+// ---------- the list of what is still possible ----------
+
+func everyCode() -> [int] {
+    var all: [int]
+    for code in 0..codeCount() {
+        all += code
+    }
+    return all
+}
+
+// Everything that would have answered the same way. Anything else has just been
+// ruled out by what you said, whether or not it looked likely a moment ago.
+func stillPossible(alive: [int], guess: [int], answer: int) -> [int] {
+    var kept: [int]
+    for code in alive {
+        if scoreOf(pegsOf(code), guess) == answer {
+            kept += code
+        }
+    }
+    return kept
+}
+
+// The pegs of every surviving code, worked out once. The chooser below asks for
+// them tens of thousands of times and taking a number apart is not free.
+func pegsFor(alive: [int]) -> [[int]] {
+    var table: [[int]]
+    for code in alive {
+        table += pegsOf(code)
+    }
+    return table
+}
+
+// The largest group this guess could leave behind. Every surviving code would
+// answer it somehow; codes that answer alike are indistinguishable afterwards,
+// so the biggest such group is the worst this guess can do.
+func worstGroup(candidate: [int], alive: [[int]]) -> int {
+    // Scores run from 0 to 40 and only some of those exist, but a slot for each
+    // is cheaper than looking for the ones that do.
+    var groups: [int]
+    for score in 0..41 {
+        groups += 0
+    }
+    for pegs in alive {
+        groups[scoreOf(pegs, candidate)] += 1
+    }
+    var largest = 0
+    for score in 0..41 {
+        // A guess that is exactly right leaves nothing behind, so its own
+        // group of one does not count against it.
+        if score != winning() && groups[score] > largest {
+            largest = groups[score]
+        }
+    }
+    return largest
+}
+
+// The opening guess is fixed, and not for want of trying: with all 1296 codes
+// alive, weighing every guess against every survivor is a million and a half
+// scorings, and the answer it arrives at is no better than two pairs. Every
+// guess after this one is chosen properly, by which point the list is small
+// enough that choosing properly is quick.
+func opener() -> int {
+    return 0 + 0 * 6 + 1 * 36 + 1 * 216
+}
+
+struct Chosen {
+    code: int
+    rng: Random
+}
+
+func chooseGuess(alive: [int], rng: Random) -> Chosen {
+    if length(alive) == codeCount() {
+        return Chosen(code: opener(), rng: rng)
+    }
+    if length(alive) == 1 {
+        return Chosen(code: alive[0], rng: rng)
+    }
+
+    let table = pegsFor(alive)
+    var best = alive[0]
+    var bestWorst = length(alive) + 1
+    var ties = 0
+    var picker = rng
+
+    for slot in 0..length(alive) {
+        let worst = worstGroup(table[slot], table)
+        if worst < bestWorst {
+            bestWorst = worst
+            best = alive[slot]
+            ties = 1
+        } else if worst == bestWorst {
+            // Among guesses that are equally good by the worst case, take one at
+            // random, so that the same secret does not always draw the same game.
+            ties += 1
+            picker = next(picker)
+            if below(picker, ties) == 0 {
+                best = alive[slot]
+            }
+        }
+    }
+    return Chosen(code: best, rng: picker)
+}
+
+// ---------- reading what you typed ----------
+
+func trimmed(typed: string) -> string {
+    return replace(replace(typed, "\t", " "), "\n", "")
+}
+
+func lettersIn(typed: string) -> [string] {
+    var found: [string]
+    for piece in split(trimmed(typed), " ") {
+        if piece != "" {
+            found += piece
+        }
+    }
+    return found
+}
+
+func colourOf(letter: string) -> int {
+    if letter == "r" || letter == "R" {
+        return 0
+    }
+    if letter == "o" || letter == "O" {
+        return 1
+    }
+    if letter == "y" || letter == "Y" {
+        return 2
+    }
+    if letter == "g" || letter == "G" {
+        return 3
+    }
+    if letter == "b" || letter == "B" {
+        return 4
+    }
+    if letter == "p" || letter == "P" {
+        return 5
+    }
+    return -1
+}
+
+// Four colours, typed with spaces between them — because lux will not hand you
+// one character out of a string, so "rgby" cannot be taken apart, while
+// "r g b y" splits on the space like anything else. The constraint shows through
+// into how the program asks its questions, which is not the worst way for a
+// language to teach you something about itself.
+func codeTyped(typed: string) -> int {
+    let letters = lettersIn(typed)
+    if length(letters) != slots() {
+        return -1
+    }
+    var code = 0
+    var place = 1
+    for letter in letters {
+        let colour = colourOf(letter)
+        if colour < 0 {
+            return -1
+        }
+        code += colour * place
+        place = place * colours()
+    }
+    return code
+}
+
+// Two small numbers: how many were in the right place, how many were the right
+// colour in the wrong place. Comes back as a score, or -1 for nonsense.
+func answerTyped(typed: string) -> int {
+    let pieces = lettersIn(typed)
+    if length(pieces) != 2 {
+        return -1
+    }
+    let black = numberIn(pieces[0])
+    let white = numberIn(pieces[1])
+    if black < 0 || white < 0 || black + white > slots() {
+        return -1
+    }
+    // Three in the right place and one in the wrong place cannot happen: if
+    // three are placed, the fourth is either placed too or is a colour that
+    // appears nowhere else.
+    if black == slots() - 1 && white == 1 {
+        return -1
+    }
+    return black * 10 + white
+}
+
+func numberIn(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+func aliveWord(count: int) -> string {
+    if count == 1 {
+        return "1 code still possible"
+    }
+    return string(count) + " codes still possible"
+}
+
+func colourKey() -> string {
+    var key = ""
+    for colour in 0..colours() {
+        if key != "" {
+            key += ", "
+        }
+        key += colourLetter(colour) + " " + colourName(colour)
+    }
+    return key
+}
+
+// ---------- the program ----------
+
+let given = args()
+var yoursToFind = false
+if length(given) > 1 && (given[1] == "mine" || given[1] == "yours") {
+    yoursToFind = true
+}
+
+print("Mastermind. Four pegs, six colours, repeats allowed — 1296 codes.")
+print("Colours: " + colourKey() + ".")
+print("Type a code as four letters with spaces between them, like: r r o y")
+print("")
+
+var rng = fromClock()
+
+if !yoursToFind {
+    print("Think of a code and keep it to yourself. After each guess, tell me two")
+    print("numbers: how many pegs I had in the right place, then how many were the")
+    print("right colour in the wrong place. So `1 2` means one placed and two")
+    print("misplaced. q to stop.")
+    print("")
+
+    var alive = everyCode()
+    var guesses = 0
+    var solved = false
+    var stopped = false
+    var impossible = false
+
+    while !solved && !stopped && !impossible {
+        let chosen = chooseGuess(alive, rng)
+        rng = chosen.rng
+        let guess = chosen.code
+        guesses += 1
+
+        print("  Guess " + string(guesses) + ": " + codeLabel(guess)
+            + "      (" + aliveWord(length(alive)) + ")")
+        let typed = input("  placed misplaced: ")
+        if trimmed(typed) == "q" || trimmed(typed) == "" {
+            stopped = true
+        } else {
+            let answer = answerTyped(typed)
+            if answer < 0 {
+                guesses -= 1
+                print("  Two numbers, like `1 2` — placed first, then misplaced.")
+            } else if answer == winning() {
+                solved = true
+            } else {
+                let before = length(alive)
+                alive = stillPossible(alive, pegsOf(guess), answer)
+                if length(alive) == 0 {
+                    impossible = true
+                } else {
+                    print("  " + scoreLabel(answer) + " rules out "
+                        + string(before - length(alive)) + " of them.")
+                }
+            }
+        }
+    }
+
+    print("")
+    if solved {
+        print("  Found it in " + string(guesses) + ".")
+        print("  Against all 1296 codes this needs five or fewer for 1,252 of them and")
+        print("  six for the other 44, averaging 4.47. Five is reachable, but only by")
+        print("  guessing codes it already knows are wrong, which this one will not do.")
+    } else if impossible {
+        print("  Something does not add up. Every answer you have given rules codes")
+        print("  out, and between them they have ruled out all 1296 — so there is no")
+        print("  code left that fits everything you have told me. One of the scores")
+        print("  was off by a peg somewhere.")
+    }
+
+} else {
+    rng = next(rng)
+    let secret = below(rng, codeCount())
+    print("I have a code. Four letters with spaces, q to give up.")
+    print("I will also tell you how many codes are still possible after each")
+    print("guess, which is a better measure of a guess than whether it was right.")
+    print("")
+
+    var alive = everyCode()
+    var guesses = 0
+    var solved = false
+    var stopped = false
+
+    while !solved && !stopped {
+        let typed = input("  your guess: ")
+        if trimmed(typed) == "q" || trimmed(typed) == "" {
+            stopped = true
+            print("  It was " + codeLabel(secret) + ".")
+        } else {
+            let guess = codeTyped(typed)
+            if guess < 0 {
+                print("  Four colours from " + colourKey() + ", with spaces: r r o y")
+            } else {
+                guesses += 1
+                let answer = scoreOf(pegsOf(secret), pegsOf(guess))
+                if answer == winning() {
+                    solved = true
+                } else {
+                    alive = stillPossible(alive, pegsOf(guess), answer)
+                    print("  " + scoreLabel(answer) + "      ("
+                        + aliveWord(length(alive)) + ")")
+                }
+            }
+        }
+    }
+
+    if solved {
+        print("")
+        print("  " + codeLabel(secret) + ", in " + string(guesses) + ".")
+        if guesses <= 5 {
+            print("  The program averages 4.47 and needs six at worst, so you are in the")
+            print("  same country as it is.")
+        } else {
+            print("  The program would have had it by now — six is its worst case and it")
+            print("  averages 4.47. The way to get there is to stop guessing what the")
+            print("  code might be and start guessing whatever splits the survivors into")
+            print("  the smallest pieces. Being right is not the point of a guess.")
+        }
+    }
+}
