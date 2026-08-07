@@ -249,22 +249,10 @@ func shapeNamed(name: string) -> [string] {
     if name == "gun" {
         return shapeGun()
     }
-    // Unreached: the driver asks `isKnown` before asking for a shape. It has to
-    // return something, and a single blank row is the emptiest picture that is
-    // still a picture — an array built and never added to is what Rust and Swift
-    // both warn about, so returning one is not free (anderix/lux#81).
+    // No such pattern. Nothing is the honest answer, and the driver reads it as
+    // one.
     var blank: [string]
-    blank += ""
     return blank
-}
-
-func isKnown(name: string) -> bool {
-    for known in knownNames() {
-        if known == name {
-            return true
-        }
-    }
-    return false
 }
 
 func noteFor(name: string) -> string {
@@ -456,12 +444,7 @@ func stepped(w: World, wide: int, tall: int) -> World {
         toCol = wide - 1
     }
 
-    // Called rowStep rather than stride, which is what it is. A lux local named
-    // `stride` shadows Swift's `stride(from:to:by:)`, which the Swift backend
-    // emits for every counted loop, and the generated file stops compiling —
-    // anderix/lux#82. The interpreter, Go and Rust are all fine with it, so the
-    // name is the only place it shows.
-    let rowStep = strideFor(wide)
+    let stride = strideFor(wide)
     var live: [int]
     var top = tall
     var left = wide
@@ -470,11 +453,11 @@ func stepped(w: World, wide: int, tall: int) -> World {
     for r in fromRow..(toRow + 1) {
         for c in fromCol..(toCol + 1) {
             let at = spotOf(r, c, wide)
-            let around = w.cells[at - rowStep - 1] + w.cells[at - rowStep]
-                       + w.cells[at - rowStep + 1]
+            let around = w.cells[at - stride - 1] + w.cells[at - stride]
+                       + w.cells[at - stride + 1]
                        + w.cells[at - 1] + w.cells[at + 1]
-                       + w.cells[at + rowStep - 1] + w.cells[at + rowStep]
-                       + w.cells[at + rowStep + 1]
+                       + w.cells[at + stride - 1] + w.cells[at + stride]
+                       + w.cells[at + stride + 1]
             var living = false
             if around == 3 {
                 living = true
@@ -627,7 +610,7 @@ if length(given) < 2 {
     let name = given[1]
     let drawing = shapeNamed(name)
 
-    if !isKnown(name) {
+    if length(drawing) == 0 {
         print("No pattern called " + name + ".")
         print("Run it with no arguments to see the ones it knows.")
     } else {
