@@ -339,6 +339,45 @@ and, down its right, something nobody has found a shortcut for. Change one
 constant: 90 draws Sierpinski's triangle, 110 can compute anything a computer
 can, 184 models traffic jams.
 
+`life.lux` is Conway's Game of Life, and it does not only draw. Four rules, none
+of which mentions a shape: a living cell with two or three living neighbours
+lives on, one with fewer or more dies, and a dead cell with exactly three comes
+alive. Everything else falls out of that. Nobody put a glider in.
+
+So the program watches. After each generation it keeps the list of live cells,
+and if an arrangement it has already seen comes round again it can say what it
+was looking at — same cells in the same place is a still life or an oscillator
+and the gap is the period, same cells somewhere else is a spaceship and the gap
+between the positions is how far it travels. It names a glider without being
+told that gliders exist. No signature string is built and nothing is hashed:
+the live-cell list is in scan order on a flat array, so shifting a pattern adds
+the same amount to every entry, which makes the gaps between the entries the
+thing that survives a move.
+
+Every verdict was checked against what these patterns are known to do. The
+blinker, toad and beacon come back at period 2, the pulsar at 3, the
+pentadecathlon at 15, the glider every 4 generations one square diagonally and
+the lightweight spaceship every 4 two squares sideways. The diehard dies out
+completely at generation 130. The r-pentomino settles at 1,103 and the acorn at
+5,206, both from a handful of cells.
+
+Those last figures are why the grid sizes are measured rather than chosen. A
+grid too small does not crop the picture, it changes the answer and says nothing
+about having done so: on 40 by 20 the diehard runs into the wall at generation 64
+and gets reported as a still life, when what it actually does is vanish. Each
+size here is the smallest that was tried where making it bigger stopped changing
+the verdict, and when a pattern does reach the edge the program says so and says
+that the verdict is about a grid of that size rather than about Life. The
+r-pentomino is the honest case: it settles at 1,103 whatever the grid, but the
+six gliders it throws off die against the wall, so 110 cells are left where an
+endless sheet would have 116.
+
+It is the second program here where building changes what it is rather than how
+long it takes, and by more than connect four does. The diehard's 130 generations
+take about fourteen seconds under `lux run` and four thousandths of a second
+built. The acorn needs 5,206 generations on a grid of 340 by 260, which is
+seventeen seconds built and was never attempted the other way.
+
 `morse.lux` goes both ways — `lux run morse.lux hello world`, or `-d` and a
 string of dots and dashes to come back. It is built the way lux forces rather
 than the way the textbook prints: with no way to take a single character out of

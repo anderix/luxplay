@@ -1,0 +1,792 @@
+// life.lux — Conway's Game of Life, and a program that says what it found.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run life.lux              the patterns it knows
+//   lux run life.lux glider       run one
+//   lux run life.lux pulsar 6     run one, drawing six generations
+//
+// Four rules, and none of them mention a shape. A living cell with two or three
+// living neighbours lives on. A living cell with fewer dies, and with more dies.
+// A dead cell with three living neighbours comes alive. That is all of it, and
+// everything below — the things that sit still, the things that blink, the
+// things that walk across the grid and the things that go on for a thousand
+// generations before settling — comes out of those four lines and nothing else.
+//
+// Nobody put a glider in. The rules do not know what a glider is. It falls out.
+//
+// So the program does not just draw: it watches. After every generation it
+// records which cells are alive, and if it ever sees an arrangement it has seen
+// before it can say what it was looking at. Same cells in the same place means a
+// still life or an oscillator, and the gap between the two sightings is the
+// period. Same cells somewhere else means a spaceship, and the gap between the
+// two positions is how far it travels each period. That is all the classifier
+// is, and it names a glider without being told one exists.
+//
+// The grid has edges, and they are real. A pattern that reaches one is not
+// wrapped around to collide with itself — it simply runs out of paper, and what
+// happens next is a fact about this grid and not about Life. Where that matters,
+// the program says so.
+//
+// A note on speed, because it is not a small one here. lux has no way to clear a
+// screen — it understands \n, \t, \" and \\, and there is no escape for the
+// character that would start an ANSI sequence — so generations print one after
+// another rather than animating in place. That much is cosmetic. What is not is
+// the interpreter. The diehard's 130 generations take about fourteen seconds
+// under `lux run` and four thousandths of a second built. The acorn needs 5,206
+// generations on a grid of 340 by 260, which is seventeen seconds built and was
+// never attempted the other way. For those two, build it first:
+//
+//   lux build life.lux
+//   ./life rpentomino
+
+// ---------------------------------------------------------------------------
+// Patterns, drawn the way you would draw them
+
+// The columns holding a live cell in one drawn row. lux cannot hand you a single
+// character out of a string, so this asks `split` instead: cutting on "#" leaves
+// the gaps between the hashes, and the lengths of those gaps add up to where
+// each hash must have been.
+func liveColumns(row: string) -> [int] {
+    var out: [int]
+    let gaps = split(row, "#")
+    var at = 0
+    for spot in 0..length(gaps) {
+        at += length(gaps[spot])
+        if spot < length(gaps) - 1 {
+            out += at
+            at += 1
+        }
+    }
+    return out
+}
+
+// Every pattern is written as the picture it is, so the source reads as the
+// thing rather than as a list of coordinates. `#` is alive and `.` is dead.
+
+func shapeBlock() -> [string] {
+    var p: [string]
+    p += "##"
+    p += "##"
+    return p
+}
+
+func shapeLoaf() -> [string] {
+    var p: [string]
+    p += ".##."
+    p += "#..#"
+    p += ".#.#"
+    p += "..#."
+    return p
+}
+
+func shapeBlinker() -> [string] {
+    var p: [string]
+    p += "###"
+    return p
+}
+
+func shapeToad() -> [string] {
+    var p: [string]
+    p += ".###"
+    p += "###."
+    return p
+}
+
+func shapeBeacon() -> [string] {
+    var p: [string]
+    p += "##.."
+    p += "##.."
+    p += "..##"
+    p += "..##"
+    return p
+}
+
+func shapePulsar() -> [string] {
+    var p: [string]
+    p += "..###...###.."
+    p += "............."
+    p += "#....#.#....#"
+    p += "#....#.#....#"
+    p += "#....#.#....#"
+    p += "..###...###.."
+    p += "............."
+    p += "..###...###.."
+    p += "#....#.#....#"
+    p += "#....#.#....#"
+    p += "#....#.#....#"
+    p += "............."
+    p += "..###...###.."
+    return p
+}
+
+func shapePentadecathlon() -> [string] {
+    var p: [string]
+    p += "..#....#.."
+    p += "##.####.##"
+    p += "..#....#.."
+    return p
+}
+
+func shapeGlider() -> [string] {
+    var p: [string]
+    p += ".#."
+    p += "..#"
+    p += "###"
+    return p
+}
+
+// The lightweight spaceship, which travels sideways rather than diagonally and
+// twice as fast across the ground.
+func shapeShip() -> [string] {
+    var p: [string]
+    p += "#..#."
+    p += "....#"
+    p += "#...#"
+    p += ".####"
+    return p
+}
+
+// Five cells. It runs for over a thousand generations.
+func shapeRPentomino() -> [string] {
+    var p: [string]
+    p += ".##"
+    p += "##."
+    p += ".#."
+    return p
+}
+
+// Seven cells, and longer still.
+func shapeAcorn() -> [string] {
+    var p: [string]
+    p += ".#....."
+    p += "...#..."
+    p += "##..###"
+    return p
+}
+
+// Seven cells that wipe themselves out entirely, but take their time about it.
+func shapeDiehard() -> [string] {
+    var p: [string]
+    p += "......#."
+    p += "##......"
+    p += ".#...###"
+    return p
+}
+
+// Gosper's glider gun: the first pattern found whose population grows without
+// limit, which settled a standing question about whether one could exist.
+func shapeGun() -> [string] {
+    var p: [string]
+    p += "........................#..........."
+    p += "......................#.#..........."
+    p += "............##......##............##"
+    p += "...........#...#....##............##"
+    p += "##........#.....#...##.............."
+    p += "##........#...#.##....#.#..........."
+    p += "..........#.....#.......#..........."
+    p += "...........#...#...................."
+    p += "............##......................"
+    return p
+}
+
+func knownNames() -> [string] {
+    var names: [string]
+    names += "block"
+    names += "loaf"
+    names += "blinker"
+    names += "toad"
+    names += "beacon"
+    names += "pulsar"
+    names += "pentadecathlon"
+    names += "glider"
+    names += "ship"
+    names += "diehard"
+    names += "rpentomino"
+    names += "acorn"
+    names += "gun"
+    return names
+}
+
+func shapeNamed(name: string) -> [string] {
+    if name == "block" {
+        return shapeBlock()
+    }
+    if name == "loaf" {
+        return shapeLoaf()
+    }
+    if name == "blinker" {
+        return shapeBlinker()
+    }
+    if name == "toad" {
+        return shapeToad()
+    }
+    if name == "beacon" {
+        return shapeBeacon()
+    }
+    if name == "pulsar" {
+        return shapePulsar()
+    }
+    if name == "pentadecathlon" {
+        return shapePentadecathlon()
+    }
+    if name == "glider" {
+        return shapeGlider()
+    }
+    if name == "ship" {
+        return shapeShip()
+    }
+    if name == "diehard" {
+        return shapeDiehard()
+    }
+    if name == "rpentomino" {
+        return shapeRPentomino()
+    }
+    if name == "acorn" {
+        return shapeAcorn()
+    }
+    if name == "gun" {
+        return shapeGun()
+    }
+    // Unreached: the driver asks `isKnown` before asking for a shape. It has to
+    // return something, and a single blank row is the emptiest picture that is
+    // still a picture — an array built and never added to is what Rust and Swift
+    // both warn about, so returning one is not free (anderix/lux#81).
+    var blank: [string]
+    blank += ""
+    return blank
+}
+
+func isKnown(name: string) -> bool {
+    for known in knownNames() {
+        if known == name {
+            return true
+        }
+    }
+    return false
+}
+
+func noteFor(name: string) -> string {
+    if name == "glider" || name == "ship" {
+        return "it should walk, and then meet the edge"
+    }
+    if name == "gun" {
+        return "its population grows without limit, so it never repeats"
+    }
+    if name == "diehard" {
+        return "it dies out completely, but not quickly"
+    }
+    if name == "rpentomino" {
+        return "1,103 generations from five cells — build it first"
+    }
+    if name == "acorn" {
+        return "5,206 generations from seven — build it first"
+    }
+    return ""
+}
+
+// Room to do whatever the pattern does. The long-running ones need space
+// because their debris spreads; the gun needs length because it fires.
+// Room to do whatever the pattern does, and these are measured rather than
+// guessed. Too small a grid does not merely crop the picture — it changes the
+// answer, and quietly. On 40 by 20 the diehard reaches the wall at generation 64
+// and is then reported as a still life, when what it actually does is vanish
+// completely at 130. Every size here is the smallest that was tried where
+// growing the grid further stopped changing the verdict.
+func widthFor(name: string) -> int {
+    if name == "acorn" {
+        return 340
+    }
+    if name == "rpentomino" {
+        return 120
+    }
+    if name == "gun" {
+        return 140
+    }
+    if name == "diehard" {
+        return 80
+    }
+    return 40
+}
+
+func heightFor(name: string) -> int {
+    if name == "acorn" {
+        return 260
+    }
+    if name == "rpentomino" {
+        return 80
+    }
+    if name == "gun" {
+        return 80
+    }
+    if name == "diehard" {
+        return 40
+    }
+    return 20
+}
+
+// How far to run before giving up on a pattern that has not repeated. Generous
+// for the two that need it, because stopping early would report "still going"
+// about something that does in fact settle.
+func limitFor(name: string) -> int {
+    if name == "rpentomino" {
+        return 1500
+    }
+    if name == "acorn" {
+        return 6000
+    }
+    return 400
+}
+
+// ---------------------------------------------------------------------------
+// The grid
+//
+// One flat array with a dead cell all the way round it, which is two decisions
+// worth stating. Flat, because a grid of grids makes every read reach through
+// two arrays. Bordered, because the border is never alive and never looked at
+// as a cell, so counting a neighbour needs no test for whether it fell off the
+// edge — the eight reads are always in range.
+
+struct World {
+    cells: [int]
+    live: [int]
+    top: int
+    left: int
+    bottom: int
+    right: int
+}
+
+func strideFor(wide: int) -> int {
+    return wide + 2
+}
+
+// Where logical row `r`, column `c` sits in the flat array.
+func spotOf(r: int, c: int, wide: int) -> int {
+    return (r + 1) * strideFor(wide) + c + 1
+}
+
+// Read the live cells back out of a grid, in scan order, and note the box they
+// fit in. Scan order matters: the classifier below leans on the list being
+// sorted, and this is where that is true.
+func surveyed(cells: [int], wide: int, tall: int) -> World {
+    var live: [int]
+    var top = tall
+    var left = wide
+    var bottom = -1
+    var right = -1
+    for r in 0..tall {
+        for c in 0..wide {
+            if cells[spotOf(r, c, wide)] == 1 {
+                live += spotOf(r, c, wide)
+                if r < top {
+                    top = r
+                }
+                if r > bottom {
+                    bottom = r
+                }
+                if c < left {
+                    left = c
+                }
+                if c > right {
+                    right = c
+                }
+            }
+        }
+    }
+    return World(cells: cells, live: live, top: top, left: left,
+                 bottom: bottom, right: right)
+}
+
+// The pattern laid down in the middle of an empty grid.
+func started(picture: [string], wide: int, tall: int) -> World {
+    var cells: [int]
+    for spot in 0..((tall + 2) * strideFor(wide)) {
+        cells += 0
+    }
+    var widest = 0
+    for spot in 0..length(picture) {
+        if length(picture[spot]) > widest {
+            widest = length(picture[spot])
+        }
+    }
+    let downBy = (tall - length(picture)) / 2
+    let acrossBy = (wide - widest) / 2
+    for r in 0..length(picture) {
+        for c in liveColumns(picture[r]) {
+            let rr = r + downBy
+            let cc = c + acrossBy
+            if rr >= 0 && rr < tall && cc >= 0 && cc < wide {
+                cells[spotOf(rr, cc, wide)] = 1
+            }
+        }
+    }
+    return surveyed(cells, wide, tall)
+}
+
+// One generation.
+//
+// Only the box the pattern occupies is looked at, grown by one on each side,
+// because a dead cell more than one step from every live cell has no living
+// neighbours and cannot come alive. On a mostly empty grid that is the
+// difference between doing the work and scanning the paper it is drawn on.
+func stepped(w: World, wide: int, tall: int) -> World {
+    var out: [int]
+    for spot in 0..((tall + 2) * strideFor(wide)) {
+        out += 0
+    }
+    if length(w.live) == 0 {
+        return surveyed(out, wide, tall)
+    }
+
+    var fromRow = w.top - 1
+    var toRow = w.bottom + 1
+    var fromCol = w.left - 1
+    var toCol = w.right + 1
+    if fromRow < 0 {
+        fromRow = 0
+    }
+    if toRow > tall - 1 {
+        toRow = tall - 1
+    }
+    if fromCol < 0 {
+        fromCol = 0
+    }
+    if toCol > wide - 1 {
+        toCol = wide - 1
+    }
+
+    // Called rowStep rather than stride, which is what it is. A lux local named
+    // `stride` shadows Swift's `stride(from:to:by:)`, which the Swift backend
+    // emits for every counted loop, and the generated file stops compiling —
+    // anderix/lux#82. The interpreter, Go and Rust are all fine with it, so the
+    // name is the only place it shows.
+    let rowStep = strideFor(wide)
+    var live: [int]
+    var top = tall
+    var left = wide
+    var bottom = -1
+    var right = -1
+    for r in fromRow..(toRow + 1) {
+        for c in fromCol..(toCol + 1) {
+            let at = spotOf(r, c, wide)
+            let around = w.cells[at - rowStep - 1] + w.cells[at - rowStep]
+                       + w.cells[at - rowStep + 1]
+                       + w.cells[at - 1] + w.cells[at + 1]
+                       + w.cells[at + rowStep - 1] + w.cells[at + rowStep]
+                       + w.cells[at + rowStep + 1]
+            var living = false
+            if around == 3 {
+                living = true
+            } else if around == 2 && w.cells[at] == 1 {
+                living = true
+            }
+            if living {
+                out[at] = 1
+                live += at
+                if r < top {
+                    top = r
+                }
+                if r > bottom {
+                    bottom = r
+                }
+                if c < left {
+                    left = c
+                }
+                if c > right {
+                    right = c
+                }
+            }
+        }
+    }
+    return World(cells: out, live: live, top: top, left: left,
+                 bottom: bottom, right: right)
+}
+
+// ---------------------------------------------------------------------------
+// Recognising a repeat
+//
+// Two generations hold the same arrangement, in the same place or somewhere
+// else, when their live cells sit in the same relative positions. The list of
+// live cells is in scan order and the grid is one flat array, so shifting a
+// pattern by a row and a column adds the same amount to every entry in the list
+// — which means the gaps between the entries are what survives a move, and
+// comparing those gaps compares shapes wherever they have got to.
+//
+// No string is built for this and nothing is hashed. Building a signature
+// string per generation would cost more than the generation did.
+
+// A cheap number that a move does not change, for ruling candidates out before
+// comparing them cell by cell.
+func shapeKey(live: [int]) -> int {
+    var total = 0
+    for spot in 0..length(live) {
+        total += (live[spot] - live[0]) * (spot + 1)
+    }
+    return total
+}
+
+func sameShape(a: [int], b: [int]) -> bool {
+    if length(a) != length(b) {
+        return false
+    }
+    for spot in 0..length(a) {
+        if a[spot] - a[0] != b[spot] - b[0] {
+            return false
+        }
+    }
+    return true
+}
+
+// ---------------------------------------------------------------------------
+// Drawing
+
+// The grids the long patterns need are wider than a terminal, so what is drawn
+// is a window on the middle of one rather than all of it. The frame is the
+// edge of the window, which is the edge of the grid only when the two are the
+// same size — `drawWide` below is what says which.
+func drawWide(wide: int) -> int {
+    if wide > 76 {
+        return 76
+    }
+    return wide
+}
+
+func drawTall(tall: int) -> int {
+    if tall > 30 {
+        return 30
+    }
+    return tall
+}
+
+func drawn(w: World, wide: int, tall: int, label: string) {
+    let showWide = drawWide(wide)
+    let showTall = drawTall(tall)
+    let fromCol = (wide - showWide) / 2
+    let fromRow = (tall - showTall) / 2
+    var rule = ""
+    for c in 0..showWide {
+        rule += "─"
+    }
+    print(label)
+    print("  ┌" + rule + "┐")
+    for r in fromRow..(fromRow + showTall) {
+        var line = "  │"
+        for c in fromCol..(fromCol + showWide) {
+            if w.cells[spotOf(r, c, wide)] == 1 {
+                line += "█"
+            } else {
+                line += " "
+            }
+        }
+        print(line + "│")
+    }
+    print("  └" + rule + "┘")
+    print("")
+}
+
+func numberFrom(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+func plural(n: int, one: string, many: string) -> string {
+    if n == 1 {
+        return one
+    }
+    return many
+}
+
+// ---------------------------------------------------------------------------
+
+let given = args()
+
+if length(given) < 2 {
+    print("Conway's Game of Life.")
+    print("")
+    print("  lux run life.lux <pattern> [generations to draw]")
+    print("")
+    print("Patterns:")
+    for name in knownNames() {
+        if noteFor(name) == "" {
+            print("  " + name)
+        } else {
+            var line = "  " + name
+            while length(line) < 20 {
+                line += " "
+            }
+            print(line + noteFor(name))
+        }
+    }
+    print("")
+    print("Every one of them is four rules and nothing else. The program runs")
+    print("each until it sees an arrangement twice, and then says what it was.")
+} else {
+    let name = given[1]
+    let drawing = shapeNamed(name)
+
+    if !isKnown(name) {
+        print("No pattern called " + name + ".")
+        print("Run it with no arguments to see the ones it knows.")
+    } else {
+        var shown = 4
+        if length(given) > 2 {
+            let asked = numberFrom(given[2])
+            if asked >= 0 {
+                shown = asked
+            }
+        }
+
+        let wide = widthFor(name)
+        let tall = heightFor(name)
+        let limit = limitFor(name)
+
+        print(name + " — " + string(length(drawing)) + " "
+            + plural(length(drawing), "row", "rows") + " on a " + string(wide)
+            + " by " + string(tall) + " grid")
+        print("")
+
+        var w = started(drawing, wide, tall)
+
+        // Every generation so far, kept so a repeat can be recognised. Only the
+        // live-cell list is kept, not the grid.
+        var pastLive: [[int]]
+        var pastKey: [int]
+        var pastTop: [int]
+        var pastLeft: [int]
+
+        pastLive += w.live
+        pastKey += shapeKey(w.live)
+        pastTop += w.top
+        pastLeft += w.left
+
+        if shown > 0 {
+            drawn(w, wide, tall, "  generation 0 — " + string(length(w.live))
+                + " " + plural(length(w.live), "cell", "cells"))
+        }
+
+        var generation = 0
+        var found = -1
+        var running = true
+        var edgeAt = -1
+        var peak = length(w.live)
+
+        while running && generation < limit {
+            w = stepped(w, wide, tall)
+            generation += 1
+
+            if length(w.live) > peak {
+                peak = length(w.live)
+            }
+            if edgeAt < 0 && length(w.live) > 0
+                && (w.top == 0 || w.left == 0 || w.bottom == tall - 1
+                    || w.right == wide - 1) {
+                edgeAt = generation
+            }
+
+            if generation <= shown {
+                drawn(w, wide, tall, "  generation " + string(generation) + " — "
+                    + string(length(w.live)) + " "
+                    + plural(length(w.live), "cell", "cells"))
+            }
+
+            var key = 0
+            if length(w.live) == 0 {
+                running = false
+            } else {
+                key = shapeKey(w.live)
+                for past in 0..length(pastLive) {
+                    if found < 0 && pastKey[past] == key
+                        && sameShape(pastLive[past], w.live) {
+                        found = past
+                    }
+                }
+                if found >= 0 {
+                    running = false
+                }
+            }
+
+            pastLive += w.live
+            pastKey += key
+            pastTop += w.top
+            pastLeft += w.left
+        }
+
+        if shown < generation {
+            drawn(w, wide, tall, "  generation " + string(generation) + " — "
+                + string(length(w.live)) + " "
+                + plural(length(w.live), "cell", "cells"))
+        }
+
+        // What it was. The settling generation is `found` rather than
+        // `generation`: `generation` is when the repeat was noticed, and the
+        // arrangement was already there a full period earlier.
+        if length(w.live) == 0 {
+            print("  Everything died out, at generation " + string(generation)
+                + ". It reached " + string(peak) + " cells on the way.")
+        } else if found >= 0 {
+            let period = generation - found
+            let downBy = w.top - pastTop[found]
+            let acrossBy = w.left - pastLeft[found]
+            if downBy == 0 && acrossBy == 0 {
+                if period == 1 {
+                    print("  A still life, from generation " + string(found)
+                        + " on. " + string(length(w.live)) + " "
+                        + plural(length(w.live), "cell", "cells")
+                        + ", and it will not change again.")
+                } else if found == 0 {
+                    print("  An oscillator with a period of " + string(period)
+                        + " — " + string(length(w.live)) + " cells, back to")
+                    print("  the same arrangement every " + string(period)
+                        + " generations. It was one from the start.")
+                } else {
+                    print("  It settled at generation " + string(found)
+                        + " into an oscillator with a period")
+                    print("  of " + string(period) + " — "
+                        + string(length(w.live))
+                        + " cells, repeating every " + string(period)
+                        + " generations.")
+                    if peak > length(w.live) {
+                        print("  It reached " + string(peak) + " cells on the way.")
+                    }
+                }
+            } else {
+                print("  A spaceship. Every " + string(period)
+                    + " generations it comes back to")
+                print("  the same shape, " + string(downBy) + " down and "
+                    + string(acrossBy) + " across.")
+                print("")
+                print("  Nothing in the four rules mentions movement. This is")
+                print("  cells being born on one side and dying on the other,")
+                print("  fast enough that the shape appears to travel.")
+            }
+        } else {
+            print("  Still going at generation " + string(generation) + ", with "
+                + string(length(w.live)) + " "
+                + plural(length(w.live), "cell", "cells")
+                + " alive and no arrangement repeated yet.")
+            if peak > length(drawing) {
+                print("  It started at " + string(length(pastLive[0]))
+                    + " cells and has reached " + string(peak) + ".")
+            }
+        }
+
+        // Said last and said plainly, because a verdict reached after the
+        // pattern has run into the wall is a verdict about the wall. The
+        // r-pentomino is the honest example: it settles at the same generation
+        // whatever size the grid is, but the gliders it throws off die at the
+        // edge, so the cells left over are fewer than they would be on paper
+        // that never ran out.
+        if edgeAt >= 0 {
+            print("")
+            print("  It reached the edge at generation " + string(edgeAt)
+                + ". Whatever left the grid")
+            print("  there is gone, so what is written above describes a grid "
+                + string(wide))
+            print("  by " + string(tall)
+                + " rather than the endless paper Life assumes.")
+        }
+    }
+}
