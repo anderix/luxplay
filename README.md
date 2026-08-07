@@ -161,6 +161,31 @@ It is also the one program here where compiling changes what the program feels
 like rather than just how fast it finishes: the hard bot takes about a second a
 move interpreted and four milliseconds built.
 
+`nim.lux` is the opposite of connect four: a game where searching is a waste of
+time, because the answer is a formula. Rows of matches, take as many as you like
+from one row, whoever takes the last one wins. The bot has no lookahead and no
+evaluator. Write each row's count in binary, stack them up, and ask of each
+column whether the number of ones in it is odd; those answers read as a binary
+number are the nim-sum, and it is zero exactly when the player about to move has
+already lost. lux has no bitwise operators, no `^` and no shift, so the nim-sum
+is assembled a column at a time out of division and remainder — which is what it
+is anyway, and harder to mistake for a machine instruction once it is written
+out.
+
+The opening rows are 1, 3, 5 and 7, whose nim-sum is zero, so the game is
+decided before either player has touched it. That is why it asks whether you
+want to move first, and why going first and playing perfectly still loses. Type
+`show` during a game and it prints the columns.
+
+Both last-match rules are there, and the gap between them is narrower than it
+looks: misère, where taking the last match loses, plays identically to the
+normal game until at most one row still holds two or more, and only then
+inverts. That is measured rather than argued. All 4,095 positions of four rows
+up to seven matches were solved by exhaustive game-tree search and compared
+against what the program believes, which agreed on every one under both rules,
+and the two strategies picked different moves in 192 positions — every one of
+them in the endgame.
+
 `guess.lux` is the guessing game backwards. You think of the number and the
 program finds it — out of a hundred in seven questions, out of a million in
 twenty — and it does not matter which number you picked, because the program

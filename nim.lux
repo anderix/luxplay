@@ -1,0 +1,476 @@
+// nim.lux — a game you cannot win, and the one number that explains why.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run nim.lux
+//
+// Matches in rows. Take as many as you like from one row, then I do the same,
+// and whoever takes the last match wins. Those are the rules. There is no board
+// to read, no piece worth more than another, and nothing you cannot see.
+//
+// You will still lose, and you will lose from the first move, because the
+// opening rows add up to something that has already decided it.
+//
+// Here is the thing that decides it. Write each row's count in binary, stack
+// them up, and ask of each column: is the number of ones in it odd or even? The
+// answers, read as a binary number, are the nim-sum. If it is zero, whoever has
+// to move next is lost — every move they can make puts a one somewhere, and the
+// other player can always put it back. If it is anything else, the player to
+// move can drive it to zero, and from then on they only have to keep doing it.
+//
+// That is the strategy, and it is not a heuristic or a lookup table. It is a
+// proof. Type `show` during a game and you can watch the columns.
+//
+// Two rules for the last match, and they are not the same game:
+//
+//   normal   taking the last match wins
+//   misère   taking the last match loses
+//
+// The strategy above is for the normal game. Misère plays the same way right up
+// to the end, and then inverts — which is worth seeing, because it says the last
+// match is the only place the two games ever differ.
+//
+// lux has no bitwise operators, no `^` and no shift, so nothing here can hide
+// inside one. The nim-sum is assembled a column at a time in `nimSum` below,
+// which is what it is anyway.
+
+// ---------------------------------------------------------------------------
+// Bits, by hand
+
+// How many binary columns to look at. Six covers rows of up to 63 matches, and
+// nothing here deals bigger rows than that. A function rather than a constant
+// because a lux function sees its parameters and its own locals, and nothing
+// else — so a value shared between functions has to be one of them.
+func bitsUsed() -> int {
+    return 6
+}
+
+// The bit at `place` in `n`, counting from zero at the right. Dividing by two
+// `place` times slides the column into the ones position, and the remainder
+// reads it. This is what a shift is.
+func bitOf(n: int, place: int) -> int {
+    var slid = n
+    for step in 0..place {
+        slid = slid / 2
+    }
+    return slid % 2
+}
+
+// The nim-sum: for each column, is the number of rows with a one there odd? If
+// so the column survives into the answer. Nothing more.
+//
+// The word for this operation is exclusive-or, and if you meet it in another
+// language it will be a single character. It is worth having written it out
+// once, because the single character makes it look like a machine instruction
+// and it isn't — it is this question, asked of every column at once.
+func nimSum(rows: [int]) -> int {
+    var total = 0
+    var place = 1
+    for column in 0..bitsUsed() {
+        var ones = 0
+        for slot in 0..length(rows) {
+            if bitOf(rows[slot], column) == 1 {
+                ones += 1
+            }
+        }
+        if ones % 2 == 1 {
+            total += place
+        }
+        place = place * 2
+    }
+    return total
+}
+
+// The same question asked of just two numbers. Finding the winning move means
+// asking what a row would have to become for the nim-sum to vanish, and that is
+// this — so it reuses the general one rather than repeating the loop.
+func xorOf(a: int, b: int) -> int {
+    var pair: [int]
+    pair += a
+    pair += b
+    return nimSum(pair)
+}
+
+// ---------------------------------------------------------------------------
+// Reading a position
+
+// Rows holding two or more. The count matters only for misère, where the endgame
+// begins the moment there is at most one of them left — before that, misère and
+// the normal game want the same move.
+func bigRows(rows: [int]) -> int {
+    var found = 0
+    for slot in 0..length(rows) {
+        if rows[slot] >= 2 {
+            found += 1
+        }
+    }
+    return found
+}
+
+func singles(rows: [int]) -> int {
+    var found = 0
+    for slot in 0..length(rows) {
+        if rows[slot] == 1 {
+            found += 1
+        }
+    }
+    return found
+}
+
+func matchesLeft(rows: [int]) -> int {
+    var total = 0
+    for slot in 0..length(rows) {
+        total += rows[slot]
+    }
+    return total
+}
+
+func firstBigRow(rows: [int]) -> int {
+    for slot in 0..length(rows) {
+        if rows[slot] >= 2 {
+            return slot
+        }
+    }
+    return -1
+}
+
+func fullestRow(rows: [int]) -> int {
+    var best = 0
+    for slot in 0..length(rows) {
+        if rows[slot] > rows[best] {
+            best = slot
+        }
+    }
+    return best
+}
+
+// ---------------------------------------------------------------------------
+// Who is winning
+
+// Can the player about to move force a win, against any defence?
+//
+// In the normal game that is what the nim-sum settles: nonzero and you win,
+// zero and you lose. Misère agrees with it everywhere except the endgame, which
+// starts when at most one row still holds two or more.
+//
+// In that endgame the rows are all ones bar at most one, and counting is enough.
+// With every row down to a single match the players just alternate taking one,
+// so an even number of them means the last is not yours to take, and you win.
+// With one bigger row left you can always choose: empty it, or leave one match
+// in it. Those two choices differ by one, so one of them leaves an odd number of
+// singles for your opponent — and that is a win, every time. A single big row is
+// therefore always won by whoever is looking at it.
+func canWin(rows: [int], misere: bool) -> bool {
+    if misere && bigRows(rows) <= 1 {
+        if bigRows(rows) == 1 {
+            return true
+        }
+        return singles(rows) % 2 == 0
+    }
+    return nimSum(rows) != 0
+}
+
+struct Play {
+    row: int
+    take: int
+}
+
+// The move to make. Always a legal one — when the position is lost every move
+// loses equally, so it takes a single match from the fullest row and waits for a
+// mistake.
+//
+// Note what the misère branch does not do: it does not check whether the normal
+// move is about to strand the game in the endgame. It does not have to. A
+// position with a zero nim-sum can never hold exactly one big row — a lone big
+// row is at least two, so it puts a column into the sum that nothing else can
+// cancel — and a move touches one row, so from two big rows you cannot reach
+// none. The normal rule therefore hands the endgame over already sorted, and the
+// two strategies meet without a seam.
+func bestPlay(rows: [int], misere: bool) -> Play {
+    if misere && bigRows(rows) <= 1 {
+        let big = firstBigRow(rows)
+        if big >= 0 {
+            // Leave an odd number of single matches behind: empty the big row if
+            // there are already an odd number, otherwise leave one match in it.
+            if singles(rows) % 2 == 1 {
+                return Play(row: big, take: rows[big])
+            }
+            return Play(row: big, take: rows[big] - 1)
+        }
+        return Play(row: fullestRow(rows), take: 1)
+    }
+
+    let sum = nimSum(rows)
+    if sum != 0 {
+        // Which row can be cut to make every column even? The row has to end up
+        // at its own value with the sum folded in, and that is only a move if it
+        // makes the row smaller.
+        for slot in 0..length(rows) {
+            let target = xorOf(rows[slot], sum)
+            if target < rows[slot] {
+                return Play(row: slot, take: rows[slot] - target)
+            }
+        }
+    }
+    return Play(row: fullestRow(rows), take: 1)
+}
+
+// ---------------------------------------------------------------------------
+// Showing it
+
+func padded(n: int, width: int) -> string {
+    var out = string(n)
+    while length(out) < width {
+        out = " " + out
+    }
+    return out
+}
+
+func binaryOf(n: int, wide: int) -> string {
+    var out = ""
+    for column in 0..wide {
+        let place = wide - 1 - column
+        out += string(bitOf(n, place))
+    }
+    return out
+}
+
+// Only as many columns as the biggest row actually needs. Padding every row out
+// to `bitsUsed` would be honest and unreadable — six columns of leading zeros
+// bury the three that are doing the work.
+func columnsFor(rows: [int]) -> int {
+    var most = 0
+    for slot in 0..length(rows) {
+        if rows[slot] > most {
+            most = rows[slot]
+        }
+    }
+    var wide = 1
+    var reach = 2
+    while reach <= most {
+        wide += 1
+        reach = reach * 2
+    }
+    return wide
+}
+
+func drawRows(rows: [int]) {
+    print("")
+    for slot in 0..length(rows) {
+        var line = "   " + string(slot + 1) + ")  "
+        if rows[slot] == 0 {
+            line += "—"
+        }
+        for stick in 0..rows[slot] {
+            if stick > 0 {
+                line += " "
+            }
+            line += "┃"
+        }
+        print(line)
+    }
+    print("")
+}
+
+// The columns, stacked, with the odd ones falling through to the bottom line.
+// This is the program's argument, and it fits on a screen.
+func drawSum(rows: [int]) {
+    let wide = columnsFor(rows)
+    var rule = ""
+    for column in 0..wide {
+        rule += "─"
+    }
+    print("")
+    print("        row   matches   binary")
+    for slot in 0..length(rows) {
+        print("          " + string(slot + 1) + "   " + padded(rows[slot], 7)
+            + "   " + binaryOf(rows[slot], wide))
+    }
+    print("                        " + rule)
+    print("    nim-sum   " + padded(nimSum(rows), 7) + "   "
+        + binaryOf(nimSum(rows), wide))
+    print("")
+    if nimSum(rows) == 0 {
+        print("  Every column holds an even number of ones. Whoever moves")
+        print("  from here loses — any move they make puts a one back into")
+        print("  some column.")
+    } else {
+        print("  Some column holds an odd number of ones. Whoever moves from here")
+        print("  can wipe them all out, and then keep wiping them out.")
+    }
+    print("")
+}
+
+// ---------------------------------------------------------------------------
+// Reading what was typed
+
+func numberFrom(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+func wordAt(typed: string, wanted: int) -> string {
+    var found = 0
+    for piece in split(typed, " ") {
+        if piece != "" {
+            if found == wanted {
+                return piece
+            }
+            found += 1
+        }
+    }
+    return ""
+}
+
+func saidYes(typed: string) -> bool {
+    return typed == "y" || typed == "Y" || typed == "yes" || typed == "Yes"
+}
+
+// ---------------------------------------------------------------------------
+
+print("Nim.")
+print("")
+print("Four rows of matches. On your turn take as many as you like — but all")
+print("from one row. Type the row, a space, and how many: `3 2` takes two from")
+print("row three. Type `show` to see what I am looking at, or `q` to stop.")
+print("")
+
+let ruleAnswer = input("Does taking the last match win, or lose? (win/lose) ")
+let misere = ruleAnswer == "lose" || ruleAnswer == "l" || ruleAnswer == "Lose"
+if misere {
+    print("Misère, then. The last match is poison.")
+} else {
+    print("Normal play. The last match is the prize.")
+}
+
+let firstAnswer = input("Do you want to go first? (y/n) ")
+var yourTurn = saidYes(firstAnswer)
+
+// 1, 3, 5, 7 — the rows from the film, and not an arbitrary choice. Their
+// nim-sum is zero, which is to say the position is already lost for whoever
+// moves first. Go first against a perfect opponent and there is no move that
+// saves you; that is not a hard game, it is a decided one. So you are asked.
+var rows = [1, 3, 5, 7]
+
+// Kept because the ending has two different things to say, and which
+// one is true depends on who opened rather than on how the game went.
+let youMovedFirst = yourTurn
+
+print("")
+if yourTurn {
+    print("Then look at the nim-sum before you move. I will wait.")
+} else {
+    print("I will go first, which means I have to break the position myself.")
+}
+
+var playing = true
+var youWon = false
+var handedItOver = false
+
+while playing && matchesLeft(rows) > 0 {
+    drawRows(rows)
+
+    if yourTurn {
+        let couldHaveWon = canWin(rows, misere)
+        let typed = input("your move: ")
+
+        if typed == "q" || typed == "Q" || typed == "quit" || typed == "" {
+            playing = false
+        } else if typed == "show" || typed == "s" {
+            drawSum(rows)
+        } else {
+            let row = numberFrom(wordAt(typed, 0)) - 1
+            let take = numberFrom(wordAt(typed, 1))
+
+            if row < 0 || row >= length(rows) {
+                print("  There is no row " + wordAt(typed, 0) + ". Rows are 1 to "
+                    + string(length(rows)) + ".")
+            } else if take < 1 {
+                print("  Say how many to take, like `" + string(row + 1) + " 2`.")
+            } else if rows[row] == 0 {
+                print("  Row " + string(row + 1) + " is already empty.")
+            } else if take > rows[row] {
+                print("  Row " + string(row + 1) + " only has " + string(rows[row])
+                    + ".")
+            } else {
+                rows[row] -= take
+                yourTurn = false
+                // You were winning and now I am. Worth saying at the moment it
+                // happens rather than at the end, because at the end it is just
+                // a result and here it is still a lesson.
+                if couldHaveWon && canWin(rows, misere) && !handedItOver {
+                    handedItOver = true
+                    print("  That was the one that mattered. Type `show` after my")
+                    print("  move and you will see the columns go even.")
+                }
+            }
+        }
+    } else {
+        if !canWin(rows, misere) {
+            print("  I am lost from here if you do not slip. I will take one and")
+            print("  hope you do.")
+        }
+        let play = bestPlay(rows, misere)
+        rows[play.row] -= play.take
+        print("  I take " + string(play.take) + " from row "
+            + string(play.row + 1) + ".")
+        yourTurn = true
+    }
+
+    if matchesLeft(rows) == 0 {
+        // Whoever just moved took the last match. `yourTurn` has already flipped
+        // to the other player, so it points at whoever did not.
+        let youTookIt = !yourTurn
+        if misere {
+            youWon = !youTookIt
+        } else {
+            youWon = youTookIt
+        }
+    }
+}
+
+drawRows(rows)
+
+if matchesLeft(rows) > 0 {
+    print("Stopped with " + string(matchesLeft(rows))
+        + " matches still on the table.")
+} else if youWon {
+    print("You win.")
+    print("")
+    print("I opened, which meant breaking a position that was already lost for")
+    print("me — and you never gave it back. Every move you made left the columns")
+    print("even, which is the only way through.")
+    if misere {
+        print("")
+        print("Misère is the harder side of it. The counting is the same")
+        print("until the very end, and then the end is the opposite. You")
+        print("found both.")
+    }
+} else if youMovedFirst {
+    print("I win.")
+    print("")
+    print("Here is the position you were handed, before you had done anything:")
+    drawSum([1, 3, 5, 7])
+    print("1, 3, 5 and 7 have a nim-sum of zero, which is why you were asked")
+    print("whether you wanted to move first. There is no opening move that saves")
+    print("you — every one of them puts a one into some column, and I only have")
+    print("to take it back out. Run it again and go second.")
+} else {
+    print("I win.")
+    print("")
+    print("This one you could have won. I opened, and opening from 1, 3, 5, 7")
+    print("means breaking a position that was already lost for me — so the game")
+    print("was yours from my first move.")
+    if handedItOver {
+        print("")
+        print("You saw where it went. Next time type `show` before you move: the")
+        print("move to make is the one that leaves every column even.")
+    } else {
+        print("")
+        print("Type `show` before each of your moves. The move to make is always")
+        print("the one that leaves every column with an even number of ones.")
+    }
+}
