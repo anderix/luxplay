@@ -275,6 +275,48 @@ guess in the worst case: 1,252 solved within five, the other 44 in six, averagin
 brings the worst case down to five and that five is the floor. So the price of
 only ever saying things that might be true is those 44 codes.
 
+`wordle.lux` is five letters and six guesses, and the interesting part is not
+the game but the marking. The rule everybody writes first — mark a letter yellow
+if the answer contains it — is not the rule, and it comes apart the moment a
+letter appears twice. Guess GEESE against THESE and the second letter is
+unmarked, not yellow: THESE has two Es, both are already claimed by the two
+sitting in the right place, and there is no third for the E at the front to
+point at. The answer has to be a supply of letters that gets used up, and used
+up by the exact matches first, which is two passes that cannot be merged.
+
+That is checked rather than asserted. Every pair of words in the list is marked
+twice, once by the two-pass rule the program uses and once by a formulation that
+does not think about positions at all — it counts letters and draws from the
+multiset left over after the exact matches. The two agree on all 1,225,449
+pairs, and a third check confirms the property the rule is supposed to have: for
+any letter, the number of positions marked green or yellow is the smaller of how
+often it appears in the guess and in the answer.
+
+It plays both sides. `lux run wordle.lux` gives you the guesses; `solve` makes
+you think of a word and marks its guesses instead, and it narrows by the only
+thing a marking tells you, which is that the answer is one of the words that
+would have produced exactly that marking. It opens with ARISE, which is measured
+rather than picked: of the 1,107 words, ARISE is the one whose worst outcome
+leaves the smallest pile, 59 words still standing. Across the whole list it
+averages 3.351 guesses.
+
+The assumption that it would do better if allowed to guess words already ruled
+out turns out to be wrong, and interestingly wrong. Spending a guess purely to
+split the survivors averages 3.384 — thirty-six extra guesses over 1,107 words.
+What it buys is the other end: guessing only from live candidates has a worst
+case of seven and two words reach it, SHAVE and WOUND, each sitting in a crowd
+that differs by one letter. Watching it work through BOUND, FOUND, HOUND, MOUND,
+POUND, WOUND is the whole problem in one line. A throwaway guess caps the worst
+case at five, and costs enough work per move that the interpreter could not
+carry it.
+
+The word list is hand-picked for words a child knows and then checked against
+the system dictionary, which caught seven entries that were not five letters
+long and two that are not words. And the marking uses no colour: green and
+yellow squares are close to unreadable for a fair number of people, so position
+carries it instead — a letter in brackets is in the right place, a letter in
+parentheses is in the word somewhere else, and a bare letter is not in it.
+
 `cipher.lux` shifts letters along the alphabet, enciphers with a keyword, and
 breaks the first of those without being given the key. Twenty-five keys means
 trying all of them breaks a shift cipher, but the program does not need you to

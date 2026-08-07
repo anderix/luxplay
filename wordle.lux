@@ -1,0 +1,652 @@
+// wordle.lux — five letters, six guesses, and the rule everybody gets wrong.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run wordle.lux            play
+//   lux run wordle.lux solve      you think of a word, it guesses
+//   lux run wordle.lux <word>     set the word yourself, for someone else
+//
+// Guess a five-letter word. After each guess every letter comes back marked:
+// in the right place, in the word but somewhere else, or not in the word.
+//
+// The marking is the part worth writing carefully, because it is where nearly
+// every home-made version goes wrong. The naive rule — mark a letter yellow if
+// the answer contains it — is not the rule, and it breaks the moment a letter
+// appears twice. Guess GEESE against THESE and the marking is
+//
+//   G  E [E][S][E]
+//
+// with the second letter unmarked, not yellow. THESE has two Es and both are
+// already claimed by the two in the right place, so there is no third E left
+// for the E at the front to point at. The answer has to be treated as a supply
+// of letters that gets used up, and used up by the exact matches first. That is
+// two passes and they cannot be merged: `scored` below does the right places
+// first, marking off the letters it consumes, and only then goes back for the
+// rest.
+//
+// The check on that is not an argument, it is 1,225,449 of them. Every pair of
+// words in the list is scored twice, once by the two-pass rule here and once by
+// counting letters — a different method reaching the same place — and they agree
+// on every pair.
+//
+// A note on the marking, since this is where the real game uses colour. Green
+// and yellow squares are close to unreadable for a good number of people, so
+// they are not used here. Position says it instead: a letter in brackets is in
+// the right place, a letter in parentheses is in the word somewhere else, and a
+// bare letter is not in the word. It reads the same to everybody, and it prints
+// the same into a terminal that has no colour at all.
+
+// ---------------------------------------------------------------------------
+// A generator, because lux has none
+//
+// Lifted from random.lux in this repo, which explains itself at more length. An
+// LCG, seeded from the nanosecond the clock happens to be showing.
+
+struct Random {
+    seed: int
+}
+
+func nextFrom(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — every run will be the same)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    let digits = replace(printed, "\n", "")
+    return match parseInt(digits) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Letters
+//
+// lux cannot hand you a single character out of a string. The way round it is
+// cipher.lux's: split the word on each letter of the alphabet in turn, and the
+// lengths of the pieces that come back say where that letter was sitting.
+
+func alphabet() -> [string] {
+    var all: [string]
+    for piece in split("a b c d e f g h i j k l m n o p q r s t u v w x y z", " ") {
+        all += piece
+    }
+    return all
+}
+
+func capitals() -> [string] {
+    var all: [string]
+    for piece in split("A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", " ") {
+        all += piece
+    }
+    return all
+}
+
+func lettersOf(word: string) -> [int] {
+    var found: [int]
+    for spot in 0..length(word) {
+        found += -1
+    }
+    let all = alphabet()
+    for slot in 0..length(all) {
+        let pieces = split(word, all[slot])
+        var at = 0
+        for piece in 0..length(pieces) - 1 {
+            at += length(pieces[piece])
+            found[at] = slot
+            at += 1
+        }
+    }
+    return found
+}
+
+// True when every character was one of the twenty-six. A word with a digit or a
+// stray space in it leaves a -1 behind, and nothing downstream would notice.
+func allLetters(marks: [int]) -> bool {
+    for spot in 0..length(marks) {
+        if marks[spot] < 0 {
+            return false
+        }
+    }
+    return true
+}
+
+// ---------------------------------------------------------------------------
+// The words
+//
+// Hand-picked so a child recognises them, then every one checked against the
+// system dictionary — which caught seven that were not five letters long and two
+// that are not words. They are the answers and they are also the only guesses
+// allowed, so anything you can be asked for is something you could have typed.
+
+func wordRows() -> [string] {
+    var rows: [string]
+    rows += "about above actor acute adapt admit adopt adult after again agent"
+    rows += "agree ahead alarm album alert alike alive allow alone along aloud"
+    rows += "alter among angel anger angle angry ankle apart apple apply arena"
+    rows += "argue arise armor arrow aside asset audio audit avoid awake award"
+    rows += "aware awful bacon badge badly baker bases basic basin basis beach"
+    rows += "beads beans beard beast began begin begun being belly below bench"
+    rows += "berry birds birth black blade blame blank blast blaze bleed blend"
+    rows += "bless blind blink block blood bloom blown blues blunt blush board"
+    rows += "boast bonus books boost booth bored bound brain brake brand brass"
+    rows += "brave bread break breed brick bride brief bring broad broke brook"
+    rows += "brown brush build built bunch burnt burst buyer cabin cable cakes"
+    rows += "candy canoe cards cargo carry carve catch cause cease chain chair"
+    rows += "chalk charm chart chase cheap cheat check cheek cheer chess chest"
+    rows += "chief child chill china chips choir chose chunk claim clash class"
+    rows += "clean clear clerk click cliff climb cling clock close cloth cloud"
+    rows += "clown clubs coach coast cocoa coins color combs comet comic coral"
+    rows += "couch cough could count court cover crack craft crane crash crawl"
+    rows += "crazy cream creek crept crest cried crime crisp cross crowd crown"
+    rows += "crude cruel crumb crush crust curly curve cycle daily dairy dance"
+    rows += "dared dates deals dealt death debut decay delay dense depth desks"
+    rows += "devil diary dimes dirty ditch diver dizzy dodge doing dolls doors"
+    rows += "doubt dough dozen draft drain drama drank drawn dread dream dress"
+    rows += "dried drift drill drink drive drops drove drown drums dryer ducks"
+    rows += "dusty dutch dwell eager eagle early earth easel eaten edges eight"
+    rows += "elbow elder elect empty enemy enjoy enter entry equal error essay"
+    rows += "event every exact exams exist extra faced facts faded fails faint"
+    rows += "fairy faith false fancy fault favor feast feeds fence ferry fever"
+    rows += "field fiery fifth fifty fight files final finds fired first fixed"
+    rows += "flame flash flask fleet flesh flick fling float flock flood floor"
+    rows += "flour flown fluid flush flute foamy focus foggy folds folks foods"
+    rows += "force forge forms forth forty forum found frame fraud fresh fried"
+    rows += "fries frogs front frost frown fruit fudge fully funny furry gains"
+    rows += "games gates gauge geese ghost giant gifts girls given glass gleam"
+    rows += "globe gloom glory glove going goods grace grade grain grand grant"
+    rows += "grape graph grasp grass grave gravy graze great greed green greet"
+    rows += "grief grill grind groan groom group grove grown guard guess guest"
+    rows += "guide guilt habit hairy halls hands handy happy hardy harsh haste"
+    rows += "hatch haunt heads heard heart heavy hedge hello helps hence herbs"
+    rows += "hills hinge hobby holds holes homes honey honor hoped horns horse"
+    rows += "hotel hound hours house human humid humor hurry ideal ideas image"
+    rows += "imply inbox index inner input irons issue items ivory jeans jelly"
+    rows += "jewel joins joint jolly judge juice jumbo jumps kinds kings knees"
+    rows += "knife knock knots known label labor lakes lamps lands lanes large"
+    rows += "laser later laugh layer leads leaks leans leapt learn lease leash"
+    rows += "least leave legal lemon level lever light liked limbs limit lined"
+    rows += "lines lions liver loads lobby local lodge lofty logic loose lorry"
+    rows += "loser loved lower loyal lucky lunar lunch lungs lying magic major"
+    rows += "maker males maple march marks marry masks match maybe mayor meals"
+    rows += "means meant meats medal media melon mercy merge merit merry metal"
+    rows += "meter midst might miles mills minds miner minor minus mixed model"
+    rows += "moist money month moral motor mound mount mouse mouth moved movie"
+    rows += "mowed muddy music naked named nasty naval necks needs nerve never"
+    rows += "newer newly night ninth noble noise north noted notes novel nurse"
+    rows += "nutty oasis occur ocean offer often olive onion opens opera orbit"
+    rows += "order organ other ought ounce outer owner oxide packs pages paint"
+    rows += "pairs panel panic pants paper parks parts party pasta paste patch"
+    rows += "paths pause peace peach pearl pedal peers penny perch photo piano"
+    rows += "picks piece pilot pinch pipes pitch pizza place plain plane plank"
+    rows += "plant plate plays plaza plots plugs plumb plums point polar polls"
+    rows += "ponds pools porch ports pound pours power press price pride prime"
+    rows += "print prize probe proof proud prove prune pulls pulse pumps punch"
+    rows += "pupil puppy purse queen query quest queue quick quiet quilt quite"
+    rows += "quote races radar radio rails rainy raise ranch range rapid rated"
+    rows += "reach ready realm rebel refer reign relax relay reply reset resin"
+    rows += "rider ridge rifle right rigid rings rinse risen risky rival river"
+    rows += "roads roast robot rocks rocky roles rolls roman rooms roots ropes"
+    rows += "rough round route royal ruins ruler rules rural sadly safer saint"
+    rows += "salad sales salty sandy sauce saved scale scare scarf scene scent"
+    rows += "scoop scope score scout scrap screw seals seats seeds seems sells"
+    rows += "sense serve seven shade shaft shake shall shame shape share shark"
+    rows += "sharp shave sheep sheet shelf shell shift shine shiny ships shirt"
+    rows += "shock shoes shone shook shoot shops shore short shots shout shown"
+    rows += "shows shrug sight signs silky silly since sings sixth sixty sized"
+    rows += "skate skill skirt skull slate slave sleep sleet slept slice slide"
+    rows += "slime slope slots small smart smell smile smoke snack snake sneak"
+    rows += "sniff snowy soaps sober socks soggy solar solid solve songs sorry"
+    rows += "sound south space spare spark speak spear speed spell spend spent"
+    rows += "spice spicy spike spill spine spite split spoil spoke spoon sport"
+    rows += "spots spray squad stack staff stage stain stair stake stale stall"
+    rows += "stamp stand stare stars start state stays steak steal steam steel"
+    rows += "steep steer stems steps stern stick stiff still sting stock stole"
+    rows += "stone stood stool stops store storm story stout stove strap straw"
+    rows += "stray strip stuck study stuff style sugar suite sunny super sweat"
+    rows += "sweep sweet swept swift swing sword table taken tales talks tanks"
+    rows += "tapes tasks taste taxes teach teams tears teeth tempo tends tenth"
+    rows += "terms tests thank theft their theme there these thick thief thigh"
+    rows += "thing think third thorn those three threw throw thumb tidal tiger"
+    rows += "tight tiles timer times tired title toast today token tones tools"
+    rows += "tooth topic torch total touch tough towel tower towns toxic trace"
+    rows += "track trade trail train trait tramp traps trash treat trees trend"
+    rows += "trial tribe trick tried tries trips troop trout truck truly trunk"
+    rows += "trust truth tubes tulip tummy tunes turns twice twins twist tying"
+    rows += "uncle under union unite until upper upset urban urged usage users"
+    rows += "using usual vague valid value vapor vault vests video views villa"
+    rows += "vines viral virus visit vital vivid vocal voice vowel wages wagon"
+    rows += "waist waits walks walls wants warms waste watch water waves weary"
+    rows += "weeds weeks weigh weird wells whale wheat wheel where which while"
+    rows += "whine white whole whose widen wider width winds wings wiped wires"
+    rows += "witch woken woman women woods words works world worms worry worse"
+    rows += "worst worth would wound wrist write wrong wrote yacht yards years"
+    rows += "yeast yield young yours youth zebra zones"
+    return rows
+}
+
+func wordBank() -> [string] {
+    var all: [string]
+    for row in wordRows() {
+        for piece in split(row, " ") {
+            all += piece
+        }
+    }
+    return all
+}
+
+func isWord(word: string, bank: [string]) -> bool {
+    for spot in 0..length(bank) {
+        if bank[spot] == word {
+            return true
+        }
+    }
+    return false
+}
+
+// ---------------------------------------------------------------------------
+// The rule
+
+// 0 — not in the word. 1 — in the word, somewhere else. 2 — right place.
+//
+// Two passes, and the order is the rule rather than an implementation detail.
+// The first pass claims the letters that are already in the right place and
+// marks them as spent. The second can then only point at what is left over,
+// which is what stops a third E being found in a word that has two.
+func scored(guess: [int], secret: [int]) -> [int] {
+    var marks: [int]
+    for spot in 0..length(guess) {
+        marks += 0
+    }
+    var spent: [bool]
+    for spot in 0..length(secret) {
+        spent += false
+    }
+
+    for spot in 0..length(guess) {
+        if guess[spot] == secret[spot] {
+            marks[spot] = 2
+            spent[spot] = true
+        }
+    }
+
+    for spot in 0..length(guess) {
+        if marks[spot] == 0 {
+            // lux has no `break`, so a flag stops the search after the first
+            // unspent copy rather than walking on and spending more of them.
+            var taken = false
+            for other in 0..length(secret) {
+                if !taken && !spent[other] && secret[other] == guess[spot] {
+                    marks[spot] = 1
+                    spent[other] = true
+                    taken = true
+                }
+            }
+        }
+    }
+    return marks
+}
+
+// The five marks packed into one number, base three. There are 243 of them, so
+// a marking is itself an array index — which is what lets the solver below
+// to sort a list of words into piles without holding the piles.
+func keyOf(marks: [int]) -> int {
+    var key = 0
+    for spot in 0..length(marks) {
+        key = key * 3 + marks[spot]
+    }
+    return key
+}
+
+func allRight(marks: [int]) -> bool {
+    for spot in 0..length(marks) {
+        if marks[spot] != 2 {
+            return false
+        }
+    }
+    return true
+}
+
+// ---------------------------------------------------------------------------
+// Showing a guess
+
+func shownGuess(guess: [int], marks: [int]) -> string {
+    let big = capitals()
+    var line = "  "
+    for spot in 0..length(guess) {
+        if marks[spot] == 2 {
+            line += "[" + big[guess[spot]] + "]"
+        } else if marks[spot] == 1 {
+            line += "(" + big[guess[spot]] + ")"
+        } else {
+            line += " " + big[guess[spot]] + " "
+        }
+    }
+    return line
+}
+
+func legend() -> string {
+    return "  [A] right place    (A) in the word    A not in it"
+}
+
+// ---------------------------------------------------------------------------
+// Narrowing
+//
+// Everything still possible after a guess: the words that would have produced
+// exactly the marking that came back. That is the only thing the marking says,
+// and it says all of it — no separate bookkeeping of which letters are in and
+// which are out, because the marking already carries that.
+
+func stillPossible(bank: [[int]], guess: [int], marks: [int]) -> [[int]] {
+    let want = keyOf(marks)
+    var left: [[int]]
+    for spot in 0..length(bank) {
+        if keyOf(scored(guess, bank[spot])) == want {
+            left += bank[spot]
+        }
+    }
+    return left
+}
+
+// Which of the words still possible splits the rest into the smallest worst
+// pile. Scoring a candidate guess against every remaining word sorts them into
+// at most 243 piles, one per marking; the pile you land in is the list you are
+// left with, and the one to fear is the biggest. Choosing the guess whose
+// biggest pile is smallest is choosing against the worst case rather than the
+// average.
+//
+// It only ever guesses a word that could still be the answer, and the assumption
+// that this is the weaker strategy turns out to be wrong. Playing every word in
+// the list this way takes 3.351 guesses on average. Letting it spend a guess on
+// a word already ruled out, chosen purely to split the survivors, takes 3.384 —
+// thirty-six extra guesses across 1,107 words, or one word in thirty costing one
+// more.
+//
+// What that buys is the other end. Guessing only from the survivors has a worst
+// case of seven, and two words in the list reach it: `shave` and `wound`, each
+// sitting in a crowd that differs by a single letter, where there is nothing to
+// do but try them one at a time. Being allowed a throwaway guess caps the worst
+// case at five and never needs a seventh.
+//
+// It stays with candidates anyway, for work rather than taste. Choosing from the
+// whole list means scoring 1,107 words against every survivor on every move,
+// which is quick built and minutes a move interpreted.
+func bestGuess(left: [[int]]) -> int {
+    var best = 0
+    var bestWorst = -1
+    for pick in 0..length(left) {
+        var piles: [int]
+        for k in 0..243 {
+            piles += 0
+        }
+        for other in 0..length(left) {
+            piles[keyOf(scored(left[pick], left[other]))] += 1
+        }
+        var worst = 0
+        for k in 0..243 {
+            if piles[k] > worst {
+                worst = piles[k]
+            }
+        }
+        if bestWorst < 0 || worst < bestWorst {
+            bestWorst = worst
+            best = pick
+        }
+    }
+    return best
+}
+
+func wordFrom(marks: [int]) -> string {
+    let small = alphabet()
+    var out = ""
+    for spot in 0..length(marks) {
+        out += small[marks[spot]]
+    }
+    return out
+}
+
+// ---------------------------------------------------------------------------
+// Reading what was typed
+
+func lowered(text: string) -> string {
+    let small = alphabet()
+    let big = capitals()
+    var out = text
+    for slot in 0..length(big) {
+        out = replace(out, big[slot], small[slot])
+    }
+    return out
+}
+
+// Where a given character sits in a piece of text — the same split trick as
+// `lettersOf`, asked about one character instead of all twenty-six.
+func spotsOf(text: string, mark: string) -> [int] {
+    var out: [int]
+    let pieces = split(text, mark)
+    var at = 0
+    for piece in 0..length(pieces) - 1 {
+        at += length(pieces[piece])
+        out += at
+        at += 1
+    }
+    return out
+}
+
+// The marking typed back in solve mode: `g` for a letter in the right place,
+// `y` for one in the word somewhere else, and anything else for one that is not
+// in the word. An empty answer means it could not be read.
+func marksFrom(text: string) -> [int] {
+    var out: [int]
+    let cleaned = replace(replace(text, " ", ""), "\t", "")
+    if length(cleaned) != 5 {
+        return out
+    }
+    for spot in 0..5 {
+        out += 0
+    }
+    for at in spotsOf(cleaned, "g") {
+        out[at] = 2
+    }
+    for at in spotsOf(cleaned, "y") {
+        out[at] = 1
+    }
+    return out
+}
+
+// The word it opens with in solve mode, and the one worth opening with
+// yourself. Measured rather than chosen — see the header.
+func opener() -> string {
+    return "arise"
+}
+
+func raised(text: string) -> string {
+    let small = alphabet()
+    let big = capitals()
+    var out = text
+    for slot in 0..length(small) {
+        out = replace(out, small[slot], big[slot])
+    }
+    return out
+}
+
+// The letters no guess can use again, which is the part of the real game's
+// keyboard that actually helps. A letter is ruled out only when it has been
+// marked absent and never marked present anywhere.
+func ruledOutLine(seen: [int]) -> string {
+    let big = capitals()
+    var out = ""
+    for slot in 0..length(seen) {
+        if seen[slot] == 1 {
+            if out != "" {
+                out += " "
+            }
+            out += big[slot]
+        }
+    }
+    return out
+}
+
+// ---------------------------------------------------------------------------
+
+let given = args()
+let bank = wordBank()
+
+var mode = "play"
+var chosen = ""
+if length(given) > 1 {
+    if given[1] == "solve" {
+        mode = "solve"
+    } else {
+        chosen = lowered(given[1])
+    }
+}
+
+if mode == "solve" {
+    print("Think of a five-letter word and do not tell me what it is.")
+    print("")
+    print("I will guess, and you mark each of my letters: `g` for one in the")
+    print("right place, `y` for one in your word but somewhere else, and `.`")
+    print("for one that is not in your word at all. So `.g..y` is five marks.")
+    print("")
+
+    var left: [[int]]
+    for spot in 0..length(bank) {
+        left += lettersOf(bank[spot])
+    }
+    print("I know " + string(length(left)) + " words.")
+    print("")
+
+    var tries = 0
+    var solving = true
+    while solving && tries < 8 {
+        var guess = lettersOf(opener())
+        if tries > 0 {
+            guess = left[bestGuess(left)]
+        }
+        print("  guess " + string(tries + 1) + ": " + raised(wordFrom(guess)))
+        let answer = input("  how did I do? ")
+
+        if answer == "quit" || answer == "q" || answer == "" {
+            print("  Stopping. I had " + string(length(left)) + " words left.")
+            solving = false
+        } else {
+            let marks = marksFrom(answer)
+            if length(marks) == 0 {
+                print("  Five marks, one per letter — like `.g..y`.")
+            } else if allRight(marks) {
+                print("")
+                print("  " + raised(wordFrom(guess)) + ", in "
+                    + string(tries + 1) + ".")
+                solving = false
+            } else {
+                left = stillPossible(left, guess, marks)
+                tries += 1
+                if length(left) == 0 {
+                    print("")
+                    print("  No word I know fits all of that, so one of the")
+                    print("  markings must have been wrong. Nothing left to try.")
+                    solving = false
+                } else if length(left) == 1 {
+                    print("  One word left.")
+                } else {
+                    print("  " + string(length(left)) + " words left.")
+                }
+            }
+        }
+    }
+    if solving {
+        print("  I have run out of guesses.")
+    }
+} else {
+    var secret = chosen
+    var mine = true
+    if secret == "" {
+        secret = bank[below(nextFrom(fromClock()), length(bank))]
+    } else {
+        mine = false
+    }
+
+    if length(secret) != 5 || !allLetters(lettersOf(secret)) {
+        print("A word to guess has to be five letters. " + raised(secret)
+            + " is not.")
+    } else {
+        let secretLetters = lettersOf(secret)
+        print("Five letters, six guesses.")
+        if !mine {
+            print("(Somebody set this one. I will not say what it is.)")
+        }
+        print(legend())
+        print("")
+
+        // 0 not seen, 1 marked absent and never present, 2 present somewhere.
+        var seen: [int]
+        for slot in 0..26 {
+            seen += 0
+        }
+
+        var tries = 0
+        var won = false
+        var playing = true
+        while playing && !won && tries < 6 {
+            let typed = lowered(input("guess " + string(tries + 1)
+                + " of 6: "))
+            if typed == "quit" || typed == "q" || typed == "" {
+                playing = false
+            } else if length(typed) != 5 {
+                print("  Five letters. " + raised(typed) + " has "
+                    + string(length(typed)) + ".")
+            } else if !allLetters(lettersOf(typed)) {
+                print("  Letters only.")
+            } else if !isWord(typed, bank) {
+                print("  I do not know " + raised(typed) + ".")
+            } else {
+                let guess = lettersOf(typed)
+                let marks = scored(guess, secretLetters)
+                tries += 1
+                print(shownGuess(guess, marks))
+                for spot in 0..length(guess) {
+                    if marks[spot] == 0 {
+                        if seen[guess[spot]] == 0 {
+                            seen[guess[spot]] = 1
+                        }
+                    } else {
+                        seen[guess[spot]] = 2
+                    }
+                }
+                if allRight(marks) {
+                    won = true
+                } else {
+                    let gone = ruledOutLine(seen)
+                    if gone != "" {
+                        print("      not in it: " + gone)
+                    }
+                }
+            }
+        }
+
+        print("")
+        if won {
+            print("Got it in " + string(tries) + ".")
+        } else if !playing {
+            print("The word was " + raised(secret) + ".")
+        } else {
+            print("Out of guesses. The word was " + raised(secret) + ".")
+        }
+    }
+}
