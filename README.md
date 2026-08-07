@@ -254,6 +254,39 @@ checked end to end with no failures: every grid legal, every answer consistent
 with its clues, every puzzle with exactly one answer, and the two solvers always
 agreeing.
 
+`minesweeper.lux` is nine by nine and ten mines, and its solver is built around
+the distinction the game turns on: not having worked a position out is not the
+same as there being nothing to work out. It reasons three ways. One number at a
+time finishes 23.7% of boards. Adding the rule that subtracts one number's
+squares from another's, the one practised players use without naming it, takes
+that to 33.4%. Adding a search that tries every arrangement of mines the numbers
+allow and keeps whatever all of them agree on takes it to 37.3%. The remaining
+boards come down to a guess somewhere.
+
+That last figure says less about Minesweeper than about how the board was dealt,
+and one convention moves it further than all three rules together. Sparing only
+the square you first click leaves 37.3% finishable; sparing its neighbours too,
+so the click opens a blank region, leaves 90.6%. The two are one number seen
+twice, since a first click opens a blank region on 41.3% of deals and 41.3% of
+90.6% is 37.3% — a board whose first square carries a number hands the solver a
+single clue and nothing to set against it, and across five thousand boards not
+one of those was ever finished.
+
+Play mode uses the solver as its dealer, dealing after your first click and
+throwing the board away until logic alone can finish it, which takes 2.9 deals
+on average. A game can always be won by working it out, and `h` names a square
+that can be proved rather than one that looks likely.
+
+The check worth describing is for the claim that fails quietly. Opening a mine
+is caught by the board, and over five thousand boards no square was opened that
+should not have been. Saying nothing here can be proved is caught by nothing,
+because an incomplete search says the same words as a complete one. So four
+hundred positions the solver had given up on were worked out again by brute
+force, every arrangement checked from scratch, and two turned out to be
+decidable after all: the search was stopping early whenever the frontier was
+empty, and so never reached the rule that settles the leftover squares by
+counting mines. Fixed, the other three hundred and ninety-eight agreed.
+
 `mastermind.lux` is guess.lux with the halving taken away. A code has no order,
 nothing to be higher or lower than, and no middle to aim at — but the scoring
 rule cuts anyway, because an answer is only consistent with some of the 1296

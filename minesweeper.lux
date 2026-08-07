@@ -1,0 +1,1007 @@
+// minesweeper.lux — nine by nine, ten mines, and a solver that can tell the
+// difference between not having worked it out and there being nothing to work out.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run minesweeper.lux         you sweep; h names a square that can be proved
+//   lux run minesweeper.lux solve   the program sweeps and shows its reasoning
+//
+// Every number on the board is a small statement about the squares around it,
+// and sweeping is the business of putting those statements together. This
+// program does that three ways, each stronger and slower than the one before,
+// and it keeps all three rather than only the strongest because where they
+// disagree is the part worth looking at.
+//
+// The first reads one number at a time. A 1 with a single unopened square
+// beside it: that square is the mine. A 1 with its mine already found: whatever
+// else it touches is safe. Everybody works this out in their first game, and on
+// its own it finishes 23.7% of boards.
+//
+// The second reads two numbers against each other. When every unopened square
+// one number touches is also touched by another, subtract them, and the
+// difference is a statement about the squares only the second one touches — a 1
+// sitting inside a 2 means the squares outside the 1 are carrying a mine
+// between them, whatever is going on in the squares they share. This is the
+// rule that separates somebody who has played a lot from somebody who has not,
+// and it lifts 23.7% to 33.4%.
+//
+// The third does not reason at all. It takes every unopened square that touches
+// a number, tries every way of putting mines on those squares that satisfies
+// every number at once and leaves a possible number of mines over for the rest
+// of the board, and then looks at what those arrangements have in common. A
+// square that is clear in all of them is safe, for no reason it can name. It
+// lifts 33.4% to 37.3%.
+//
+// So the rules between them settle 37.3% of boards and the other 62.7% come
+// down to a guess somewhere. Sudoku next door is arranged so that this can
+// never happen, and the difference is not that sudoku is easier: it is that a
+// sudoku is built with an answer and checked for having only one, while a
+// minesweeper board is dealt and then has to live with whatever it dealt.
+//
+// That 37.3% is not a fact about Minesweeper, though. It is a fact about how
+// the board was dealt, and one convention moves it further than all three rules
+// put together.
+//
+// The convention is what the first click is worth. Sparing the square you click
+// and nothing else leaves 37.3% of boards finishable. Sparing its neighbours
+// too, so the first click opens a blank region rather than a single number,
+// leaves 90.6%. One decision about dealing beats the subset rule and the
+// complete search combined, which is worth sitting with, because the hard part
+// of a problem does not always live inside the algorithm.
+//
+// The two figures are one figure seen twice. A first click opens a blank region
+// on 41.3% of deals, and 41.3% of 90.6% is 37.3%. They multiply that cleanly
+// because a board whose first square carries a number is almost never
+// finishable: the solver has one clue and nothing to set against it, so it can
+// only move at all if that number covers every neighbour, and having marked
+// those it has no open square touching anything unknown and stops there. Over
+// five thousand boards, the number finished from a first square that was not
+// blank was zero.
+//
+// Play mode leans on that. It deals the board after your first click and throws
+// it away until the solver above can finish it without ever guessing, which
+// takes 2.9 deals on average and took 15 at worst over two hundred games. A
+// game here can always be won by working it out. That is a thumb on the scale
+// and is worth naming as one: boards needing a guess are not unusual, they are
+// most of them, and this program refuses to deal them, so the mines you get are
+// not quite uniformly scattered.
+//
+// One last thing, about the claim this program exists to make. When a solver
+// opens a square that held a mine, the board says so immediately, and across
+// five thousand boards this one opened no square it should not have and marked
+// none that was clear. But when it says nothing here can be proved, an
+// incomplete search says the same words as a complete one and nothing
+// contradicts either. So four hundred positions it had given up on were worked
+// out again by the crudest method there is — every arrangement of the frontier,
+// no pruning, each checked against every number from scratch — to see whether
+// anything had been left on the table. Two had, the first time round: the
+// search was stopping early whenever the frontier was empty, and so never
+// reached the rule that settles the leftover squares by counting mines. That is
+// the bug a check like this is for, and after it was fixed the other three
+// hundred and ninety-eight agreed.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same board every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- the board ----------
+
+// Eighty-one squares in one flat array rather than nine arrays of nine. Every
+// part of this program reaches for a square's neighbours constantly, and one
+// array with arithmetic on the position beats reaching through two.
+
+func wide() -> int {
+    return 9
+}
+
+func tall() -> int {
+    return 9
+}
+
+func cellCount() -> int {
+    return wide() * tall()
+}
+
+func mineTotal() -> int {
+    return 10
+}
+
+func rowOf(spot: int) -> int {
+    return spot / wide()
+}
+
+func colOf(spot: int) -> int {
+    return spot % wide()
+}
+
+func neighboursOf(spot: int) -> [int] {
+    var out: [int]
+    let row = rowOf(spot)
+    let col = colOf(spot)
+    for downBy in 0..3 {
+        for acrossBy in 0..3 {
+            let nearRow = row + downBy - 1
+            let nearCol = col + acrossBy - 1
+            if nearRow >= 0 && nearRow < tall() && nearCol >= 0 && nearCol < wide() {
+                if nearRow != row || nearCol != col {
+                    out += nearRow * wide() + nearCol
+                }
+            }
+        }
+    }
+    return out
+}
+
+// ---------- dealing ----------
+
+struct Deal {
+    mine: [bool]
+    clue: [int]
+    rng: Random
+}
+
+// Mines go down after the first square is chosen, not before, so the first
+// click can never lose. That is the usual rule and it is not only kindness:
+// a game decided before you have seen anything is not a puzzle.
+func dealMines(rng: Random, spared: int) -> Deal {
+    var mine: [bool]
+    for spot in 0..cellCount() {
+        mine += false
+    }
+    var placed = 0
+    var picker = rng
+    while placed < mineTotal() {
+        picker = next(picker)
+        let spot = below(picker, cellCount())
+        if spot != spared && !mine[spot] {
+            mine[spot] = true
+            placed += 1
+        }
+    }
+    var clue: [int]
+    for spot in 0..cellCount() {
+        var around = 0
+        for other in neighboursOf(spot) {
+            if mine[other] {
+                around += 1
+            }
+        }
+        clue += around
+    }
+    return Deal(mine: mine, clue: clue, rng: picker)
+}
+
+// ---------- what the player has done ----------
+
+// One number per square: 0 not touched, 1 opened, 2 marked as a mine. The
+// solver below uses the same three numbers, because what it knows and what you
+// know are the same kind of thing.
+
+func freshMarks() -> [int] {
+    var marks: [int]
+    for spot in 0..cellCount() {
+        marks += 0
+    }
+    return marks
+}
+
+// Opening a square with no mines beside it opens its neighbours too, and
+// theirs, out to the edge of the blank region. The trail of squares still to
+// look at is an array plus a depth, the same stack maze.lux backs up along:
+// lux arrays grow but never shrink, so popping moves the marker and the next
+// push writes over what was abandoned.
+func openFrom(marks: [int], clue: [int], start: int) -> [int] {
+    var out = marks
+    if out[start] != 0 {
+        return out
+    }
+    var trail: [int]
+    out[start] = 1
+    trail += start
+    var depth = 1
+    while depth > 0 {
+        depth -= 1
+        let spot = trail[depth]
+        if clue[spot] == 0 {
+            for other in neighboursOf(spot) {
+                if out[other] == 0 {
+                    out[other] = 1
+                    if depth == length(trail) {
+                        trail += other
+                    } else {
+                        trail[depth] = other
+                    }
+                    depth += 1
+                }
+            }
+        }
+    }
+    return out
+}
+
+func openedCount(marks: [int]) -> int {
+    var count = 0
+    for spot in 0..cellCount() {
+        if marks[spot] == 1 {
+            count += 1
+        }
+    }
+    return count
+}
+
+func markedCount(marks: [int]) -> int {
+    var count = 0
+    for spot in 0..cellCount() {
+        if marks[spot] == 2 {
+            count += 1
+        }
+    }
+    return count
+}
+
+// The game is won when every square that is not a mine has been opened. Where
+// the flags are does not come into it — a flag is a note to yourself.
+func hasWon(marks: [int]) -> bool {
+    return openedCount(marks) == cellCount() - mineTotal()
+}
+
+// ---------- drawing ----------
+
+func faceOf(marks: [int], clue: [int], mine: [bool], spot: int, over: bool) -> string {
+    if over && mine[spot] {
+        if marks[spot] == 2 {
+            return "#"
+        }
+        return "*"
+    }
+    if marks[spot] == 2 {
+        return "F"
+    }
+    if marks[spot] == 0 {
+        return "."
+    }
+    if clue[spot] == 0 {
+        return " "
+    }
+    return string(clue[spot])
+}
+
+func rowLabel(row: int) -> string {
+    let shown = string(row + 1)
+    if length(shown) < 2 {
+        return " " + shown
+    }
+    return shown
+}
+
+func picture(marks: [int], clue: [int], mine: [bool], over: bool) {
+    var head = "     "
+    for col in 0..wide() {
+        head += string(col + 1) + " "
+    }
+    print(head)
+    var rule = "   +"
+    for col in 0..wide() {
+        rule += "--"
+    }
+    print(rule + "-+")
+    for row in 0..tall() {
+        var line = rowLabel(row) + " | "
+        for col in 0..wide() {
+            line += faceOf(marks, clue, mine, row * wide() + col, over) + " "
+        }
+        print(line + "|")
+    }
+    print(rule + "-+")
+}
+
+// ---------- what the solver is looking at ----------
+
+// The solver is handed the squares that are open and the numbers on them, and
+// nothing else. It never sees where the mines are, and it does not look at your
+// flags either — a flag you put down in the wrong place would mislead it, and a
+// helper that can be misled by the person it is helping is worse than none.
+
+struct View {
+    mark: [int]
+    clue: [int]
+    left: int
+}
+
+// For helping a player: the open squares and nothing else.
+func viewOf(marks: [int], clue: [int]) -> View {
+    var mark: [int]
+    for spot in 0..cellCount() {
+        if marks[spot] == 1 {
+            mark += 1
+        } else {
+            mark += 0
+        }
+    }
+    return View(mark: mark, clue: clue, left: mineTotal())
+}
+
+// For the solver playing on its own, where a 2 is not somebody's guess but a
+// square it proved. Those have to come back in, or every round it re-proves
+// the same mine and never gets past it.
+func viewTrusting(marks: [int], clue: [int]) -> View {
+    return View(mark: marks, clue: clue, left: mineTotal())
+}
+
+func unknownAround(v: View, spot: int) -> [int] {
+    var out: [int]
+    for other in neighboursOf(spot) {
+        if v.mark[other] == 0 {
+            out += other
+        }
+    }
+    return out
+}
+
+func minesAround(v: View, spot: int) -> int {
+    var count = 0
+    for other in neighboursOf(spot) {
+        if v.mark[other] == 2 {
+            count += 1
+        }
+    }
+    return count
+}
+
+func holds(list: [int], spot: int) -> bool {
+    for other in list {
+        if other == spot {
+            return true
+        }
+    }
+    return false
+}
+
+func inside(small: [int], big: [int]) -> bool {
+    for spot in small {
+        if !holds(big, spot) {
+            return false
+        }
+    }
+    return true
+}
+
+// What a pass of reasoning came up with: squares it can prove are safe and
+// squares it can prove are mines. Either list may be empty, and both may name
+// the same square twice, which costs nothing — acting on a square twice is the
+// same as acting on it once.
+struct Found {
+    safe: [int]
+    mines: [int]
+}
+
+func foundNothing(f: Found) -> bool {
+    return length(f.safe) == 0 && length(f.mines) == 0
+}
+
+// ---------- rule one: one number at a time ----------
+
+// The rule everybody works out for themselves in the first game. A 1 with one
+// unopened square beside it: that square is the mine. A 1 with a mine already
+// found beside it: everything else around it is safe. Nothing here looks at
+// more than one number.
+func plainRules(v: View) -> Found {
+    var safe: [int]
+    var mines: [int]
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 1 {
+            let shut = unknownAround(v, spot)
+            if length(shut) > 0 {
+                let want = v.clue[spot] - minesAround(v, spot)
+                if want == 0 {
+                    for other in shut {
+                        safe += other
+                    }
+                } else if want == length(shut) {
+                    for other in shut {
+                        mines += other
+                    }
+                }
+            }
+        }
+    }
+    return Found(safe: safe, mines: mines)
+}
+
+// ---------- rule two: two numbers at once ----------
+
+// The rule that separates somebody who has played a lot from somebody who has
+// not, and it is worth saying in words before it is said in code.
+//
+// Take a 1 and a 2 sitting side by side, and suppose every unopened square the
+// 1 touches is also touched by the 2. The 1 says one mine is somewhere in its
+// squares. The 2 says two mines are somewhere in its own, which include all of
+// the 1's. So one of the 2's mines is inside the shared part and one is not,
+// which means the squares the 2 touches and the 1 does not are carrying exactly
+// one mine between them — and if there is only one such square, it is a mine,
+// with no need to know anything about the shared squares at all.
+//
+// Stated generally: when one number's squares sit entirely inside another's,
+// subtract, and the difference is a smaller statement about the squares left
+// over. If the difference is nothing, they are all safe. If the difference is
+// as large as the leftover, they are all mines.
+func pairRules(v: View) -> Found {
+    var safe: [int]
+    var mines: [int]
+
+    var sets: [[int]]
+    var needs: [int]
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 1 {
+            let shut = unknownAround(v, spot)
+            if length(shut) > 0 {
+                sets += shut
+                needs += v.clue[spot] - minesAround(v, spot)
+            }
+        }
+    }
+
+    for small in 0..length(sets) {
+        for big in 0..length(sets) {
+            if small != big && length(sets[small]) < length(sets[big])
+                && inside(sets[small], sets[big]) {
+                var rest: [int]
+                for spot in sets[big] {
+                    if !holds(sets[small], spot) {
+                        rest += spot
+                    }
+                }
+                let extra = needs[big] - needs[small]
+                if extra == 0 {
+                    for spot in rest {
+                        safe += spot
+                    }
+                } else if extra == length(rest) {
+                    for spot in rest {
+                        mines += spot
+                    }
+                }
+            }
+        }
+    }
+    return Found(safe: safe, mines: mines)
+}
+
+// ---------- rule three: all of them at once ----------
+
+// The two rules above are how a person plays, and they are not the truth. They
+// look at one number, or at two that happen to nest. A position can be perfectly
+// determined by four numbers pulling against each other in a way no pair of them
+// settles, and neither rule will see it.
+//
+// So this last one does not reason at all. It lists every unopened square that
+// touches a number — the frontier — and tries every way of putting mines on
+// those squares that agrees with every number at once and leaves a possible
+// number of mines over for the rest of the board. Then it looks at what all
+// those arrangements have in common. A square with no mine in any of them is
+// safe, whatever the reason, and a square with a mine in all of them is a mine.
+// A square that is a mine in some and not in others cannot be settled by
+// anybody, and saying so is the point of it: a solver that cannot
+// tell "I have not worked it out" from "there is nothing to work out" cannot
+// tell you when you are being asked to guess.
+
+struct Puzzle {
+    cells: [int]
+    inClue: [[int]]
+    ofCell: [[int]]
+    need: [int]
+    off: int
+    left: int
+}
+
+func indexIn(cells: [int], spot: int) -> int {
+    for slot in 0..length(cells) {
+        if cells[slot] == spot {
+            return slot
+        }
+    }
+    return -1
+}
+
+func puzzleOf(v: View) -> Puzzle {
+    var cells: [int]
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 0 {
+            var touches = false
+            for other in neighboursOf(spot) {
+                if v.mark[other] == 1 {
+                    touches = true
+                }
+            }
+            if touches {
+                cells += spot
+            }
+        }
+    }
+
+    // One demand per open number: these squares of the frontier, that many
+    // mines. Squares are held as positions in the frontier list rather than
+    // as board squares, because the search below counts along the list.
+    var inClue: [[int]]
+    var need: [int]
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 1 {
+            var slots: [int]
+            for other in neighboursOf(spot) {
+                if v.mark[other] == 0 {
+                    slots += indexIn(cells, other)
+                }
+            }
+            if length(slots) > 0 {
+                inClue += slots
+                need += v.clue[spot] - minesAround(v, spot)
+            }
+        }
+    }
+
+    // And the same list read the other way: for each frontier square, which
+    // demands mention it. Deciding a square only disturbs those.
+    var ofCell: [[int]]
+    for slot in 0..length(cells) {
+        var demands: [int]
+        for which in 0..length(inClue) {
+            if holds(inClue[which], slot) {
+                demands += which
+            }
+        }
+        ofCell += demands
+    }
+
+    var off = 0
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 0 && indexIn(cells, spot) < 0 {
+            off += 1
+        }
+    }
+
+    var mines = v.left
+    for spot in 0..cellCount() {
+        if v.mark[spot] == 2 {
+            mines -= 1
+        }
+    }
+    return Puzzle(cells: cells, inClue: inClue, ofCell: ofCell, need: need,
+                  off: off, left: mines)
+}
+
+// Everything the arrangements agree on, and how many there were.
+struct Tally {
+    mineIn: [int]
+    total: int
+    least: int
+    most: int
+}
+
+// Can what has been decided so far still come out right? Only the demands
+// touching the square just decided can have changed, so only those are checked:
+// too many mines already is dead, and not enough squares left to reach the
+// number is dead. A demand whose last square has just been decided gets both
+// tests at once, which is the same as checking it exactly — so a run that
+// reaches the end of the list has satisfied every demand without ever needing
+// a separate pass to confirm it.
+func fits(p: Puzzle, at: int, pick: [int]) -> bool {
+    for which in p.ofCell[at] {
+        var have = 0
+        var undecided = 0
+        for slot in p.inClue[which] {
+            if slot <= at {
+                have += pick[slot]
+            } else {
+                undecided += 1
+            }
+        }
+        if have > p.need[which] {
+            return false
+        }
+        if have + undecided < p.need[which] {
+            return false
+        }
+    }
+    return true
+}
+
+func walk(p: Puzzle, at: int, used: int, pick: [int], acc: Tally) -> Tally {
+    if at == length(p.cells) {
+        // The mines this arrangement did not use have to fit on the squares
+        // that touch no number at all.
+        if p.left - used > p.off {
+            return acc
+        }
+        var counts = acc.mineIn
+        for slot in 0..length(pick) {
+            counts[slot] += pick[slot]
+        }
+        var least = acc.least
+        if least < 0 || used < least {
+            least = used
+        }
+        var most = acc.most
+        if used > most {
+            most = used
+        }
+        return Tally(mineIn: counts, total: acc.total + 1, least: least, most: most)
+    }
+
+    var got = acc
+    var pickNo = pick
+    pickNo[at] = 0
+    if fits(p, at, pickNo) {
+        got = walk(p, at + 1, used, pickNo, got)
+    }
+    if used < p.left {
+        var pickYes = pick
+        pickYes[at] = 1
+        if fits(p, at, pickYes) {
+            got = walk(p, at + 1, used + 1, pickYes, got)
+        }
+    }
+    return got
+}
+
+func searchRules(v: View) -> Found {
+    var safe: [int]
+    var mines: [int]
+    let p = puzzleOf(v)
+
+    // An empty frontier is not a reason to stop. Every square left may be out
+    // in the open, touching no number at all, and the count still settles them:
+    // ten mines all marked means whatever is left is safe. The search runs on
+    // an empty list quite happily — it finds the one arrangement that puts no
+    // mines anywhere, which is the right answer to the question being asked.
+    var pick: [int]
+    var zero: [int]
+    for slot in 0..length(p.cells) {
+        pick += 0
+        zero += 0
+    }
+    let seen = walk(p, 0, 0, pick, Tally(mineIn: zero, total: 0, least: -1, most: 0))
+    if seen.total == 0 {
+        return Found(safe: safe, mines: mines)
+    }
+
+    for slot in 0..length(p.cells) {
+        if seen.mineIn[slot] == 0 {
+            safe += p.cells[slot]
+        } else if seen.mineIn[slot] == seen.total {
+            mines += p.cells[slot]
+        }
+    }
+
+    // The squares out in the open, touching no number, are decided by counting
+    // rather than by looking. If every arrangement spends all the mines on the
+    // frontier there is nothing left to be out there; if every arrangement
+    // leaves behind as many as there are squares, all of them are mines.
+    if p.off > 0 {
+        if seen.least == p.left && seen.most == p.left {
+            for spot in 0..cellCount() {
+                if v.mark[spot] == 0 && indexIn(p.cells, spot) < 0 {
+                    safe += spot
+                }
+            }
+        } else if seen.least == p.left - p.off && seen.most == p.left - p.off {
+            for spot in 0..cellCount() {
+                if v.mark[spot] == 0 && indexIn(p.cells, spot) < 0 {
+                    mines += spot
+                }
+            }
+        }
+    }
+    return Found(safe: safe, mines: mines)
+}
+
+// The three in order, cheapest first, stopping at the first that says anything.
+// Which one it took is worth knowing, so it comes back alongside the answer.
+struct Verdict {
+    found: Found
+    rule: int
+}
+
+func deduce(v: View) -> Verdict {
+    let plain = plainRules(v)
+    if !foundNothing(plain) {
+        return Verdict(found: plain, rule: 1)
+    }
+    let pairs = pairRules(v)
+    if !foundNothing(pairs) {
+        return Verdict(found: pairs, rule: 2)
+    }
+    return Verdict(found: searchRules(v), rule: 3)
+}
+
+func ruleName(rule: int) -> string {
+    return match rule {
+        1 => "one number on its own"
+        2 => "one number inside another"
+        _ => "every arrangement that fits"
+    }
+}
+
+// ---------- playing it out with no guessing ----------
+
+struct Outcome {
+    won: bool
+    marks: [int]
+    hardest: int
+    steps: int
+}
+
+// Open the first square, then apply the rules until they run dry. If they run
+// dry with squares still shut, this board cannot be finished without a guess,
+// and the run stops rather than tossing a coin — the point is to find out.
+func playOut(clue: [int], mine: [bool], first: int, loud: bool) -> Outcome {
+    var marks = openFrom(freshMarks(), clue, first)
+    var hardest = 0
+    var steps = 0
+    var stuck = false
+
+    while !stuck && !hasWon(marks) {
+        let seen = deduce(viewTrusting(marks, clue))
+        // A rule may well name a square that has already been dealt with, so
+        // what stops the loop is not whether it found something but whether
+        // anything on the board moved.
+        var moved = 0
+        for spot in seen.found.mines {
+            if marks[spot] == 0 {
+                marks[spot] = 2
+                moved += 1
+            }
+        }
+        for spot in seen.found.safe {
+            if marks[spot] == 0 {
+                marks = openFrom(marks, clue, spot)
+                moved += 1
+            }
+        }
+        if moved == 0 {
+            stuck = true
+        } else {
+            if seen.rule > hardest {
+                hardest = seen.rule
+            }
+            steps += 1
+            if loud {
+                print("")
+                print("  " + string(length(seen.found.safe)) + " safe, "
+                    + string(length(seen.found.mines)) + " mines — by "
+                    + ruleName(seen.rule) + ".")
+                picture(marks, clue, mine, false)
+            }
+        }
+    }
+    return Outcome(won: hasWon(marks), marks: marks, hardest: hardest, steps: steps)
+}
+
+// ---------- reading what you typed ----------
+
+func trimmed(typed: string) -> string {
+    return replace(replace(typed, "\t", " "), "\n", "")
+}
+
+func wordsIn(typed: string) -> [string] {
+    var found: [string]
+    for piece in split(trimmed(typed), " ") {
+        if piece != "" {
+            found += piece
+        }
+    }
+    return found
+}
+
+func numberIn(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+// A row and a column, counting from one, typed with a space between them
+// because lux will not hand you one character out of a string. An `f` in front
+// means flag it instead of opening it.
+func spotTyped(words: [string], from: int) -> int {
+    if length(words) - from != 2 {
+        return -1
+    }
+    let row = numberIn(words[from])
+    let col = numberIn(words[from + 1])
+    if row < 1 || row > tall() || col < 1 || col > wide() {
+        return -1
+    }
+    return (row - 1) * wide() + (col - 1)
+}
+
+func spotLabel(spot: int) -> string {
+    return "row " + string(rowOf(spot) + 1) + ", column " + string(colOf(spot) + 1)
+}
+
+// ---------- the program ----------
+
+let given = args()
+var mode = "play"
+if length(given) > 1 {
+    mode = given[1]
+}
+
+if mode == "solve" {
+    print("Minesweeper, nine by nine, ten mines. The program plays and shows its")
+    print("reasoning. F is a square it has proved holds a mine.")
+    print("")
+
+    var rng = fromClock()
+    rng = next(rng)
+    let first = below(rng, cellCount())
+    let deal = dealMines(rng, first)
+    print("  Opening " + spotLabel(first) + ", which cannot be a mine.")
+
+    let out = playOut(deal.clue, deal.mine, first, true)
+    print("")
+    if out.won {
+        print("  Finished in " + string(out.steps) + " rounds without a guess.")
+        print("  The hardest it had to reach for: " + ruleName(out.hardest) + ".")
+    } else {
+        picture(out.marks, deal.clue, deal.mine, true)
+        print("  Stuck. Nothing left on this board is provable, so the next move")
+        print("  is a guess and the program will not pretend otherwise. The mines")
+        print("  are shown above: * one it never found, # one it had marked.")
+    }
+
+} else {
+    print("Minesweeper, nine by nine, ten mines.")
+    print("Type a row and a column to open a square, like: 5 5")
+    print("Put f in front to flag one: f 5 5")
+    print("h asks for a square that can be proved safe. q gives up.")
+    print("")
+
+    var rng = fromClock()
+    var marks = freshMarks()
+    var mine: [bool]
+    var clue: [int]
+    for spot in 0..cellCount() {
+        mine += false
+        clue += 0
+    }
+
+    var dealt = false
+    var lost = false
+    var stopped = false
+
+    while !lost && !stopped && !(dealt && hasWon(marks)) {
+        picture(marks, clue, mine, false)
+        print("  " + string(mineTotal() - markedCount(marks)) + " mines unflagged")
+        let typed = input("  move: ")
+        let words = wordsIn(typed)
+
+        if length(words) == 0 || words[0] == "q" {
+            stopped = true
+        } else if words[0] == "h" {
+            if !dealt {
+                print("  Open a square first — there is nothing to reason from yet.")
+            } else {
+                let seen = deduce(viewOf(marks, clue))
+                if foundNothing(seen.found) {
+                    print("  Nothing here can be proved. Every way of arranging the")
+                    print("  mines that fits the numbers puts one on some squares and")
+                    print("  not on others, so this is a guess, not a deduction.")
+                } else if length(seen.found.safe) > 0 {
+                    print("  " + spotLabel(seen.found.safe[0]) + " is safe, by "
+                        + ruleName(seen.rule) + ".")
+                } else {
+                    print("  " + spotLabel(seen.found.mines[0]) + " is a mine, by "
+                        + ruleName(seen.rule) + ".")
+                }
+            }
+        } else if words[0] == "f" || words[0] == "F" {
+            let spot = spotTyped(words, 1)
+            if spot < 0 {
+                print("  A row and a column, each from 1 to 9: f 5 5")
+            } else if marks[spot] == 1 {
+                print("  That one is already open.")
+            } else if marks[spot] == 2 {
+                marks[spot] = 0
+            } else {
+                marks[spot] = 2
+            }
+        } else {
+            let spot = spotTyped(words, 0)
+            if spot < 0 {
+                print("  A row and a column, each from 1 to 9: 5 5")
+            } else if marks[spot] == 2 {
+                print("  That one is flagged. Take the flag off first: f "
+                    + string(rowOf(spot) + 1) + " " + string(colOf(spot) + 1))
+            } else if marks[spot] == 1 {
+                print("  That one is already open.")
+            } else {
+                if !dealt {
+                    // The board is dealt around the first square and thrown
+                    // away until the solver above can finish it without ever
+                    // guessing. See the note at the top — this is a thumb on
+                    // the scale, and it is the solver that decides which
+                    // boards are fair.
+                    //
+                    // Nothing here asks for the first square to open a blank
+                    // region, and it always does. A first square with a number
+                    // on it leaves the solver one clue and nothing to set
+                    // against it, so it can only move if that number covers
+                    // every neighbour it has — and having marked those, it
+                    // has no open square touching anything unknown and stops
+                    // anyway. Boards that survive this loop have a blank first
+                    // square because no other kind survives it.
+                    var tries = 0
+                    var settled = false
+                    while !settled && tries < 400 {
+                        rng = next(rng)
+                        let deal = dealMines(rng, spot)
+                        rng = deal.rng
+                        tries += 1
+                        if playOut(deal.clue, deal.mine, spot, false).won {
+                            mine = deal.mine
+                            clue = deal.clue
+                            settled = true
+                        }
+                    }
+                    if !settled {
+                        let deal = dealMines(rng, spot)
+                        rng = deal.rng
+                        mine = deal.mine
+                        clue = deal.clue
+                    }
+                    dealt = true
+                }
+                if mine[spot] {
+                    lost = true
+                    marks[spot] = 1
+                } else {
+                    marks = openFrom(marks, clue, spot)
+                }
+            }
+        }
+        print("")
+    }
+
+    if lost {
+        picture(marks, clue, mine, true)
+        print("  That one was a mine.")
+    } else if stopped {
+        if dealt {
+            picture(marks, clue, mine, true)
+        }
+        print("  Stopping there.")
+    } else {
+        picture(marks, clue, mine, true)
+        print("  All ten found. Every square that was not a mine is open.")
+    }
+}
