@@ -3,6 +3,10 @@
 Small lux programs written for the fun of it. Every one runs with `lux run
 <file>`, and every one converts clean to Rust, Swift, and Go.
 
+They are here because they answer a fair question about a small teaching
+language, which is whether anything real can be built in it. Every one of these
+was, and several are shaped by something lux deliberately withholds.
+
 ## What is here
 
 Games:
