@@ -254,6 +254,36 @@ checked end to end with no failures: every grid legal, every answer consistent
 with its clues, every puzzle with exactly one answer, and the two solvers always
 agreeing.
 
+`battleship.lux` is ten by ten with five ships, and it holds three shooters
+because the good one is only interesting beside the others. One fires at squares
+it has not tried and remembers nothing, taking 95.3 shots to sink a fleet. One
+plays the way people are taught, searching on a checkerboard and working
+outwards from a hit, taking 55.0. The third has no rule about opening and no
+rule about following up. For every square it counts how many ways a ship still
+afloat could be lying that would cover it, and fires at the largest number,
+which takes 44.8.
+
+Both of the second one's habits fall out of that count unwritten. It opens near
+the middle because a ship has more room to lie there than against an edge, and
+it walks a ship down after a hit because the placements worth counting are the
+ones that would explain the hit. What does not fall out is the checkerboard:
+over ten thousand fleets, 50.1% of the counting bot's first twenty shots landed
+on the even squares, which is the share you get by not caring, against 68.5% for
+the shooter that does it on purpose. Counting placements argues about where
+ships probably are; parity argues about which squares can be skipped without
+losing anything, and a count has no way to say that. The counter wins by ten
+shots regardless.
+
+The result worth the measuring was not about any of the three. When a ship goes
+down the shooter is told which ship it was and which squares it lay on, and it
+is tempting to file that under bookkeeping. The same bot told the ship's name
+but not its squares needs 63.5 shots rather than 44.8, and told nothing at all,
+64.5. So what it is told is worth about nineteen shots and how it thinks is
+worth ten, which is nearly two to one the other way from the moral anybody sets
+out to write. The density map was checked against a second count written from
+the rules rather than the code, over six hundred positions from real games, and
+the two agreed everywhere.
+
 `minesweeper.lux` is nine by nine and ten mines, and its solver is built around
 the distinction the game turns on: not having worked a position out is not the
 same as there being nothing to work out. It reasons three ways. One number at a

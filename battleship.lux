@@ -1,0 +1,851 @@
+// battleship.lux — ten by ten, five ships, and a bot that does nothing but count.
+//
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
+//   lux run battleship.lux         you against the one that counts
+//   lux run battleship.lux keen    against one that plays the way people do
+//   lux run battleship.lux wild    against one that fires anywhere
+//   lux run battleship.lux solve   the counting bot hunts alone, showing its map
+//
+// Three shooters live here, and the reason there are three is that the good one
+// is only interesting next to the others.
+//
+// The wild one fires at squares it has not tried yet and remembers nothing. It
+// takes 95.3 shots on average to sink a fleet, which is barely better than
+// firing at all hundred squares in order, and it is here as a floor and as an
+// opponent for somebody small.
+//
+// The keen one plays the way people are taught. Search on a checkerboard,
+// because the shortest ship is two long and has to cover a square whose row and
+// column add to an even number, so half the board can wait. When something is
+// hit, work outwards from it until the ship is down. That takes 55.0 shots.
+//
+// The third has no rule about opening and no rule about following up. It has
+// one calculation, applied to every square: how many ways could a ship still
+// afloat be lying that would cover this square, given every splash so far. It
+// fires at the largest number. That takes 44.8 shots.
+//
+// Both of the keen one's habits fall out of that count without being written
+// anywhere. It opens near the middle because a ship has more room to lie there
+// than against an edge, and it walks a ship down after a hit because, once a hit
+// has no sunk ship to account for it, the placements worth counting are the ones
+// that would explain it. Two behaviours, one count, neither of them decided.
+//
+// What does not fall out is the checkerboard, and this is worth stating plainly
+// because it is the sort of thing that gets assumed. Over ten thousand fleets,
+// 50.1% of the counting bot's first twenty shots landed on the even squares,
+// which is what you get by not caring; the keen one manages 68.5%. Counting
+// placements is an argument about where ships probably are. Parity is an
+// argument about which squares can be skipped without losing anything, and the
+// map has no way to say that. The counter wins anyway, by ten shots, because
+// being right about where ships are turns out to be worth more than being
+// efficient about where they are not.
+//
+// Then the result that surprised me, which is not about any of the three.
+//
+// When a ship goes down, this program tells the shooter which ship it was and
+// which squares it had been lying on. Across a table you are told "you sank my
+// battleship" and left to work out which of your hits made it up, and it is
+// tempting to treat the difference as bookkeeping. It is not. The same counting
+// bot, told the ship's name but not its squares, needs 63.5 shots instead of
+// 44.8. Told nothing at all, 64.5. So the information at the end of a ship's
+// life is worth about nineteen shots, and the gap between the counting bot and
+// the way people play is worth ten. What it is told beats how it thinks, by
+// nearly two to one — which is not the moral anybody sets out to write, and is
+// the reason to measure the thing you were going to assert.
+//
+// One number in here was chosen rather than derived. A placement that would
+// explain two loose hits at once counts twelve times as much as one explaining a
+// single hit, because ships are straight and two hits in a line are usually the
+// same ship. Weighing every placement alike costs 1.2 shots (46.0), and weighing
+// by the count of hits rather than steeply costs 0.3 (45.1). Small, real, and
+// smaller than it feels while writing it.
+//
+// Ships are allowed to touch, which is the usual rule and matters more than it
+// sounds: forbidding it would leak a ring of free information around every hit.
+
+// ---------- the generator, from random.lux ----------
+
+struct Random {
+    seed: int
+}
+
+func next(r: Random) -> Random {
+    return Random(seed: (r.seed * 1103515245 + 12345) % 2147483648)
+}
+
+func below(r: Random, sides: int) -> int {
+    return (r.seed / 65536) % sides
+}
+
+func fromClock() -> Random {
+    return match run("date", ["+%N"]) {
+        ok(let out)  => seedFrom(out.stdout)
+        err(let why) => noClock(why)
+    }
+}
+
+func noClock(why: string) -> Random {
+    print("(no clock: " + why + " — the same game every time)")
+    return Random(seed: 1)
+}
+
+func seedFrom(printed: string) -> Random {
+    return match parseInt(replace(printed, "\n", "")) {
+        some(let n) => Random(seed: n % 2147483648)
+        none        => Random(seed: 1)
+    }
+}
+
+// ---------- the sea and the fleet ----------
+
+func wide() -> int {
+    return 10
+}
+
+func cellCount() -> int {
+    return wide() * wide()
+}
+
+func fleetSize() -> int {
+    return 5
+}
+
+func shipLength(kind: int) -> int {
+    return match kind {
+        0 => 5
+        1 => 4
+        2 => 3
+        3 => 3
+        _ => 2
+    }
+}
+
+func shipName(kind: int) -> string {
+    return match kind {
+        0 => "carrier"
+        1 => "battleship"
+        2 => "cruiser"
+        3 => "submarine"
+        _ => "destroyer"
+    }
+}
+
+func shipLetter(kind: int) -> string {
+    return match kind {
+        0 => "C"
+        1 => "B"
+        2 => "R"
+        3 => "S"
+        _ => "D"
+    }
+}
+
+func fleetSquares() -> int {
+    var total = 0
+    for kind in 0..fleetSize() {
+        total += shipLength(kind)
+    }
+    return total
+}
+
+func rowOf(spot: int) -> int {
+    return spot / wide()
+}
+
+func colOf(spot: int) -> int {
+    return spot % wide()
+}
+
+// The squares a ship of this length would cover if it started here and lay
+// this way. An empty answer means it would hang off the edge, which is the
+// only reason a run is ever refused at this stage — whether the squares are
+// free is somebody else's question.
+func runFrom(start: int, len: int, down: bool) -> [int] {
+    var out: [int]
+    let row = rowOf(start)
+    let col = colOf(start)
+    if down {
+        if row + len > wide() {
+            return out
+        }
+        for step in 0..len {
+            out += (row + step) * wide() + col
+        }
+    } else {
+        if col + len > wide() {
+            return out
+        }
+        for step in 0..len {
+            out += row * wide() + col + step
+        }
+    }
+    return out
+}
+
+// ---------- putting a fleet down ----------
+
+struct Fleet {
+    at: [int]
+    rng: Random
+}
+
+// One number per square: 0 open water, otherwise the ship's kind plus one.
+func placeFleet(rng: Random) -> Fleet {
+    var at: [int]
+    for spot in 0..cellCount() {
+        at += 0
+    }
+    var picker = rng
+    for kind in 0..fleetSize() {
+        var placed = false
+        while !placed {
+            picker = next(picker)
+            let down = below(picker, 2) == 1
+            picker = next(picker)
+            let spots = runFrom(below(picker, cellCount()), shipLength(kind), down)
+            if length(spots) > 0 {
+                var free = true
+                for spot in spots {
+                    if at[spot] != 0 {
+                        free = false
+                    }
+                }
+                if free {
+                    for spot in spots {
+                        at[spot] = kind + 1
+                    }
+                    placed = true
+                }
+            }
+        }
+    }
+    return Fleet(at: at, rng: picker)
+}
+
+func shipSpots(at: [int], kind: int) -> [int] {
+    var out: [int]
+    for spot in 0..cellCount() {
+        if at[spot] == kind + 1 {
+            out += spot
+        }
+    }
+    return out
+}
+
+func isSunk(at: [int], struck: [bool], kind: int) -> bool {
+    for spot in shipSpots(at, kind) {
+        if !struck[spot] {
+            return false
+        }
+    }
+    return true
+}
+
+// ---------- what a shooter knows ----------
+
+// A shooter never sees the fleet. It sees its own shots coming back, and it is
+// told when a ship goes down and which squares it was lying on. That last part
+// is a concession — across a table you are told "you sank my battleship" and
+// left to work out which of your hits it was made of — and the header says
+// what the concession is worth, because it was measured rather than waved at.
+
+struct Hunt {
+    known: [int]
+    sunk: [bool]
+}
+
+func freshHunt() -> Hunt {
+    var known: [int]
+    for spot in 0..cellCount() {
+        known += 0
+    }
+    var sunk: [bool]
+    for kind in 0..fleetSize() {
+        sunk += false
+    }
+    return Hunt(known: known, sunk: sunk)
+}
+
+func chasing(h: Hunt) -> bool {
+    for spot in 0..cellCount() {
+        if h.known[spot] == 2 {
+            return true
+        }
+    }
+    return false
+}
+
+// ---------- the map of where a ship could be ----------
+
+// This is what the program is for. Take every ship still afloat, and every
+// place on the board it could still be lying — every square it would cover
+// free of a square already known to be water, and free of one belonging to a
+// ship already sunk. Count, for each square, how many of those placements
+// cover it. That count is what the bot thinks of the square, and it thinks
+// nothing else about it.
+//
+// Nothing in it mentions where to open or how to follow up a hit, and it does
+// both anyway. The middle of the board is covered by more placements than the
+// corners, because a ship lying against an edge has fewer ways to lie there,
+// so the first shot goes to the middle without anybody deciding it should.
+// And when a hit has no sunk ship to account for it, the only placements worth
+// counting are the ones that would explain it, so the map lights up around the
+// hit and the bot walks the ship down. Two behaviours out of one count.
+//
+// It does not, however, do the third thing people expect of it, and this was
+// worth checking rather than assuming. The trick everybody is taught is to
+// open on a checkerboard, since the shortest ship is two long and has to cover
+// a square whose row and column add to an even number, so half the board can
+// be left until later. The density map does not do that: over ten thousand
+// fleets, half its first twenty shots landed on the even squares, which is the
+// share you get by not caring. Counting placements says where ships are likely
+// to be, and parity is not an argument about likelihood — it is an argument
+// about which squares can be skipped without losing anything. The map has no
+// way to express that, and it still beats the shooter that does it, because
+// being right about where ships are is worth more than being efficient about
+// where they are not.
+
+// How much a placement counts for. A placement that would explain two hits at
+// once is not twice as interesting as one explaining a single hit, it is far
+// more interesting, because ships are straight and two hits in a line are
+// nearly always the same ship. The measured cost of getting this wrong is in
+// the header.
+func weightOf(onHits: int) -> int {
+    var weight = 1
+    for step in 0..onHits {
+        weight = weight * 12
+    }
+    return weight
+}
+
+func densityMap(h: Hunt) -> [int] {
+    var heat: [int]
+    for spot in 0..cellCount() {
+        heat += 0
+    }
+    let following = chasing(h)
+
+    for kind in 0..fleetSize() {
+        if !h.sunk[kind] {
+            for lying in 0..2 {
+                for start in 0..cellCount() {
+                    let spots = runFrom(start, shipLength(kind), lying == 1)
+                    if length(spots) > 0 {
+                        var fits = true
+                        var onHits = 0
+                        for spot in spots {
+                            if h.known[spot] == 1 || h.known[spot] == 3 {
+                                fits = false
+                            } else if h.known[spot] == 2 {
+                                onHits += 1
+                            }
+                        }
+                        // While a hit is unaccounted for, a placement that
+                        // does not explain it is not worth counting.
+                        if fits && (!following || onHits > 0) {
+                            let weight = weightOf(onHits)
+                            for spot in spots {
+                                if h.known[spot] == 0 {
+                                    heat[spot] += weight
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return heat
+}
+
+struct Chosen {
+    spot: int
+    rng: Random
+}
+
+// The brightest square on the map, with ties broken by the dice so that the
+// same fleet does not always draw the same game.
+func sharpShot(h: Hunt, rng: Random) -> Chosen {
+    let heat = densityMap(h)
+    var best = -1
+    var bestHeat = -1
+    var ties = 0
+    var picker = rng
+    for spot in 0..cellCount() {
+        if h.known[spot] == 0 {
+            if heat[spot] > bestHeat {
+                bestHeat = heat[spot]
+                best = spot
+                ties = 1
+            } else if heat[spot] == bestHeat {
+                ties += 1
+                picker = next(picker)
+                if below(picker, ties) == 0 {
+                    best = spot
+                }
+            }
+        }
+    }
+    return Chosen(spot: best, rng: picker)
+}
+
+// ---------- two weaker shooters, for comparison and for company ----------
+
+func openSquares(h: Hunt) -> [int] {
+    var out: [int]
+    for spot in 0..cellCount() {
+        if h.known[spot] == 0 {
+            out += spot
+        }
+    }
+    return out
+}
+
+// Anywhere it has not already tried. No memory of what it hit, which is what
+// makes it a fair opponent for somebody small and a floor for everybody else.
+func wildShot(h: Hunt, rng: Random) -> Chosen {
+    let open = openSquares(h)
+    let picker = next(rng)
+    return Chosen(spot: open[below(picker, length(open))], rng: picker)
+}
+
+func neighboursOf(spot: int) -> [int] {
+    var out: [int]
+    let row = rowOf(spot)
+    let col = colOf(spot)
+    if row > 0 {
+        out += spot - wide()
+    }
+    if row < wide() - 1 {
+        out += spot + wide()
+    }
+    if col > 0 {
+        out += spot - 1
+    }
+    if col < wide() - 1 {
+        out += spot + 1
+    }
+    return out
+}
+
+// How most people play, written out: search on a checkerboard until something
+// is hit, then work outwards from the hit. The checkerboard is not a
+// superstition — the shortest ship is two long, so it must cover a square
+// whose row and column add to an even number, and looking at the other half of
+// the board first can only waste shots.
+func keenShot(h: Hunt, rng: Random) -> Chosen {
+    var chase: [int]
+    for spot in 0..cellCount() {
+        if h.known[spot] == 2 {
+            for near in neighboursOf(spot) {
+                if h.known[near] == 0 {
+                    chase += near
+                }
+            }
+        }
+    }
+    if length(chase) > 0 {
+        let picker = next(rng)
+        return Chosen(spot: chase[below(picker, length(chase))], rng: picker)
+    }
+
+    var even: [int]
+    for spot in openSquares(h) {
+        if (rowOf(spot) + colOf(spot)) % 2 == 0 {
+            even += spot
+        }
+    }
+    if length(even) == 0 {
+        return wildShot(h, rng)
+    }
+    let picker = next(rng)
+    return Chosen(spot: even[below(picker, length(even))], rng: picker)
+}
+
+func shotFor(level: int, h: Hunt, rng: Random) -> Chosen {
+    if level == 0 {
+        return wildShot(h, rng)
+    }
+    if level == 1 {
+        return keenShot(h, rng)
+    }
+    return sharpShot(h, rng)
+}
+
+func levelName(level: int) -> string {
+    return match level {
+        0 => "wild"
+        1 => "keen"
+        _ => "sharp"
+    }
+}
+
+// ---------- firing ----------
+
+// What a shot did, said the way the shooter hears it: hit or missed, and if a
+// ship went down, which one and where it had been lying.
+struct Splash {
+    hit: bool
+    sunkKind: int
+    spots: [int]
+}
+
+func fireAt(at: [int], struck: [bool], spot: int) -> Splash {
+    var empty: [int]
+    if at[spot] == 0 {
+        return Splash(hit: false, sunkKind: -1, spots: empty)
+    }
+    let kind = at[spot] - 1
+    var after = struck
+    after[spot] = true
+    if isSunk(at, after, kind) {
+        return Splash(hit: true, sunkKind: kind, spots: shipSpots(at, kind))
+    }
+    return Splash(hit: true, sunkKind: -1, spots: empty)
+}
+
+func heardBack(h: Hunt, spot: int, splash: Splash) -> Hunt {
+    var known = h.known
+    var sunk = h.sunk
+    if splash.hit {
+        known[spot] = 2
+    } else {
+        known[spot] = 1
+    }
+    if splash.sunkKind >= 0 {
+        sunk[splash.sunkKind] = true
+        for other in splash.spots {
+            known[other] = 3
+        }
+    }
+    return Hunt(known: known, sunk: sunk)
+}
+
+// ---------- drawing ----------
+
+// Two characters a square, so the ten in the last column takes the space the
+// separator would have used and the header still lines up with the grid.
+func columnHeads() -> string {
+    var head = "     "
+    for col in 0..wide() {
+        if col < wide() - 1 {
+            head += string(col + 1) + " "
+        } else {
+            head += string(col + 1)
+        }
+    }
+    return head
+}
+
+func rowLabel(row: int) -> string {
+    let shown = string(row + 1)
+    if length(shown) < 2 {
+        return " " + shown
+    }
+    return shown
+}
+
+func edge() -> string {
+    var rule = "   +"
+    for col in 0..wide() {
+        rule += "--"
+    }
+    return rule + "-+"
+}
+
+// Your own sea: ships by their letter until they are hit, then X, and o where
+// a shot found nothing.
+func yourFace(at: [int], struck: [bool], spot: int) -> string {
+    if struck[spot] {
+        if at[spot] != 0 {
+            return "X"
+        }
+        return "o"
+    }
+    if at[spot] != 0 {
+        return shipLetter(at[spot] - 1)
+    }
+    return "."
+}
+
+// Their sea, which you only know by what came back.
+func theirFace(h: Hunt, spot: int) -> string {
+    return match h.known[spot] {
+        1 => "o"
+        2 => "X"
+        3 => "#"
+        _ => "."
+    }
+}
+
+func drawYours(at: [int], struck: [bool]) {
+    print(columnHeads())
+    print(edge())
+    for row in 0..wide() {
+        var line = rowLabel(row) + " | "
+        for col in 0..wide() {
+            line += yourFace(at, struck, row * wide() + col) + " "
+        }
+        print(line + "|")
+    }
+    print(edge())
+}
+
+func drawTheirs(h: Hunt) {
+    print(columnHeads())
+    print(edge())
+    for row in 0..wide() {
+        var line = rowLabel(row) + " | "
+        for col in 0..wide() {
+            line += theirFace(h, row * wide() + col) + " "
+        }
+        print(line + "|")
+    }
+    print(edge())
+}
+
+// The map itself, scaled so the brightest square reads 9. Watching it is the
+// point of solve mode. Before a shot is fired it is a smooth mound with its
+// peak in the middle, which is the shape of "a ship has more room here"; after
+// a hit it collapses to a cross through that square, which is the shape of
+// "something has to explain this".
+func drawHeat(h: Hunt) {
+    let heat = densityMap(h)
+    var top = 0
+    for spot in 0..cellCount() {
+        if h.known[spot] == 0 && heat[spot] > top {
+            top = heat[spot]
+        }
+    }
+    print(columnHeads())
+    print(edge())
+    for row in 0..wide() {
+        var line = rowLabel(row) + " | "
+        for col in 0..wide() {
+            let spot = row * wide() + col
+            if h.known[spot] != 0 {
+                line += theirFace(h, spot) + " "
+            } else if top == 0 {
+                line += "0 "
+            } else {
+                line += string(heat[spot] * 9 / top) + " "
+            }
+        }
+        print(line + "|")
+    }
+    print(edge())
+}
+
+// ---------- a game the program plays against itself ----------
+
+struct Hunted {
+    shots: int
+    rng: Random
+}
+
+func huntDown(at: [int], level: int, rng: Random, loud: bool) -> Hunted {
+    var h = freshHunt()
+    var struck: [bool]
+    for spot in 0..cellCount() {
+        struck += false
+    }
+    var hits = 0
+    var shots = 0
+    var picker = rng
+
+    while hits < fleetSquares() {
+        if loud {
+            print("")
+            print("  shot " + string(shots + 1) + ", " + string(hits) + " of "
+                + string(fleetSquares()) + " squares hit so far:")
+            drawHeat(h)
+        }
+        let pick = shotFor(level, h, picker)
+        picker = pick.rng
+        let splash = fireAt(at, struck, pick.spot)
+        struck[pick.spot] = true
+        shots += 1
+        if splash.hit {
+            hits += 1
+        }
+        h = heardBack(h, pick.spot, splash)
+        if loud && splash.sunkKind >= 0 {
+            print("  sank the " + shipName(splash.sunkKind) + " with shot "
+                + string(shots) + ".")
+        }
+    }
+    return Hunted(shots: shots, rng: picker)
+}
+
+// ---------- reading what you typed ----------
+
+func trimmed(typed: string) -> string {
+    return replace(replace(typed, "\t", " "), "\n", "")
+}
+
+func wordsIn(typed: string) -> [string] {
+    var found: [string]
+    for piece in split(trimmed(typed), " ") {
+        if piece != "" {
+            found += piece
+        }
+    }
+    return found
+}
+
+func numberIn(text: string) -> int {
+    return match parseInt(text) {
+        some(let n) => n
+        none        => -1
+    }
+}
+
+func spotTyped(words: [string]) -> int {
+    if length(words) != 2 {
+        return -1
+    }
+    let row = numberIn(words[0])
+    let col = numberIn(words[1])
+    if row < 1 || row > wide() || col < 1 || col > wide() {
+        return -1
+    }
+    return (row - 1) * wide() + (col - 1)
+}
+
+func spotLabel(spot: int) -> string {
+    return string(rowOf(spot) + 1) + " " + string(colOf(spot) + 1)
+}
+
+// ---------- the program ----------
+
+let given = args()
+var mode = "play"
+if length(given) > 1 {
+    mode = given[1]
+}
+
+var level = 2
+if mode == "wild" {
+    level = 0
+} else if mode == "keen" {
+    level = 1
+}
+
+if mode == "solve" {
+    print("Battleship. The program hunts a fleet on its own and shows the map it")
+    print("is reading. Every open square holds a count of how many places a ship")
+    print("still afloat could be lying that would cover it, scaled so the best")
+    print("square reads 9. X is a hit, # a sunk ship, o open water.")
+
+    var rng = fromClock()
+    let fleet = placeFleet(rng)
+    rng = fleet.rng
+    let out = huntDown(fleet.at, 2, rng, true)
+    print("")
+    print("  Whole fleet down in " + string(out.shots) + " shots.")
+    print("  Over ten thousand fleets this averages 44.8, against 55.0 for")
+    print("  hunting on a checkerboard and following up hits, and 95.3 for")
+    print("  firing anywhere at all.")
+
+} else {
+    print("Battleship, ten by ten. Both fleets are laid out for you.")
+    print("Type a row and a column to fire, like: 4 7    q gives up.")
+    print("Your sea shows C carrier, B battleship, R cruiser, S submarine,")
+    print("D destroyer. X is a hit, o a miss, # a ship that has gone down.")
+    print("You are shooting at the " + levelName(level) + " one — try `wild` or")
+    print("`keen` as an argument for an easier game.")
+    print("")
+
+    var rng = fromClock()
+    let yours = placeFleet(rng)
+    rng = yours.rng
+    let theirs = placeFleet(rng)
+    rng = theirs.rng
+
+    var youStruck: [bool]
+    var theyStruck: [bool]
+    for spot in 0..cellCount() {
+        youStruck += false
+        theyStruck += false
+    }
+
+    // What you know of their sea, and what the bot knows of yours.
+    var youKnow = freshHunt()
+    var theyKnow = freshHunt()
+    var yourHits = 0
+    var theirHits = 0
+    var yourShots = 0
+    var theirShots = 0
+    var stopped = false
+
+    while !stopped && yourHits < fleetSquares() && theirHits < fleetSquares() {
+        print("  their sea — " + string(yourHits) + " of "
+            + string(fleetSquares()) + " in " + string(yourShots) + " shots")
+        drawTheirs(youKnow)
+        print("  your sea — they have " + string(theirHits) + " in "
+            + string(theirShots))
+        drawYours(yours.at, theyStruck)
+        let typed = input("  fire at: ")
+        let words = wordsIn(typed)
+        if length(words) == 0 || words[0] == "q" {
+            stopped = true
+        } else {
+            let spot = spotTyped(words)
+            if spot < 0 {
+                print("  A row and a column, each from 1 to 10, like: 4 7")
+            } else if youKnow.known[spot] != 0 {
+                print("  You have already fired at " + spotLabel(spot) + ".")
+            } else {
+                yourShots += 1
+                let splash = fireAt(theirs.at, youStruck, spot)
+                youStruck[spot] = true
+                if splash.hit {
+                    yourHits += 1
+                }
+                youKnow = heardBack(youKnow, spot, splash)
+                if splash.sunkKind >= 0 {
+                    print("  Hit — and that sank their " + shipName(splash.sunkKind) + ".")
+                } else if splash.hit {
+                    print("  Hit.")
+                } else {
+                    print("  Miss.")
+                }
+
+                if yourHits < fleetSquares() {
+                    let pick = shotFor(level, theyKnow, rng)
+                    rng = pick.rng
+                    theirShots += 1
+                    let back = fireAt(yours.at, theyStruck, pick.spot)
+                    theyStruck[pick.spot] = true
+                    if back.hit {
+                        theirHits += 1
+                    }
+                    theyKnow = heardBack(theyKnow, pick.spot, back)
+                    if back.sunkKind >= 0 {
+                        print("  They fire at " + spotLabel(pick.spot)
+                            + " — and sink your " + shipName(back.sunkKind) + ".")
+                    } else if back.hit {
+                        print("  They fire at " + spotLabel(pick.spot) + " — hit.")
+                    } else {
+                        print("  They fire at " + spotLabel(pick.spot) + " — miss.")
+                    }
+                }
+                print("")
+            }
+        }
+    }
+
+    print("")
+    if yourHits >= fleetSquares() {
+        print("  Their fleet is down. " + string(yourShots) + " shots.")
+        print("  The counting bot averages 44.8 over ten thousand fleets.")
+    } else if theirHits >= fleetSquares() {
+        print("  Your fleet is down, in " + string(theirShots) + " of their shots.")
+        drawTheirs(youKnow)
+    } else {
+        print("  Stopping there. Their fleet was:")
+        drawYours(theirs.at, youStruck)
+    }
+}
