@@ -3,10 +3,59 @@
 Small lux programs written for the fun of it. Every one runs with `lux run
 <file>`, and every one converts clean to Rust, Swift, and Go.
 
+## What is here
+
+Games:
+
+| Program | What it is |
+| --- | --- |
+| [`poker.lux`](#poker) | Heads-up Texas Hold'em with a tutor that simulates your equity before every decision |
+| [`blackjack.lux`](#blackjack) | What standing, hitting and doubling are each worth in chips, worked out exactly |
+| [`connect.lux`](#connect) | Connect Four against minimax with alpha-beta pruning |
+| [`nim.lux`](#nim) | Matches, and a bot with no lookahead because the answer is a formula |
+| [`battleship.lux`](#battleship) | Ten by ten and five ships, with three shooters to compare |
+| [`minesweeper.lux`](#minesweeper) | Nine by nine, and a solver that separates being stuck from there being nothing to find |
+| [`mastermind.lux`](#mastermind) | Guessing with no order to halve, where the scoring rule cuts anyway |
+| [`wordle.lux`](#wordle) | Five letters and six guesses, where the marking is harder than the game |
+| [`hangman.lux`](#hangman) | Word from a list, letters from you |
+| [`rps.lux`](#rps) | Rock, paper, scissors against a bot that learns your habits and says so first |
+| [`guess.lux`](#guess) | You think of the number and the program finds it |
+
+Programs that work something out:
+
+| Program | What it is |
+| --- | --- |
+| [`sudoku.lux`](#sudoku) | Makes a puzzle, then solves it twice to show what choosing the next square well is worth |
+| [`maze.lux`](#hangman) | Digs a maze with one path between any two points; `solve` races three solvers through it |
+| [`cipher.lux`](#cipher) | Shift and keyword ciphers, and breaks the shift without being given the key |
+| [`weekday.lux`](#weekday) | The day of the week for any date, by two methods with nothing in common |
+
+Drawing and generating:
+
+| Program | What it is |
+| --- | --- |
+| [`mandelbrot.lux`](#mandelbrot) | The Mandelbrot set in text; four constants are the window |
+| [`rule30.lux`](#rule30) | Eight yes-or-nos, and a pattern nobody has found a shortcut for |
+| [`life.lux`](#life) | Conway's Game of Life, four rules, none of them mentioning a shape |
+| [`random.lux`](#random) | The random number generator lux deliberately does not have |
+
+Things you would actually use:
+
+| Program | What it is |
+| --- | --- |
+| [`todo.lux`](#todo) | A list that survives being closed |
+| [`flash.lux`](#flash) | Flashcards in five boxes, with the deck in a plain text file |
+| [`drill.lux`](#drill) | Times tables, timed, ending in which facts are worth another look |
+| [`morse.lux`](#morse) | Morse in both directions |
+| [`runes.lux`](#runes) | English in Tolkien's runes, and back again |
+| [`dashboard.lux`](#dashboard) | Uptime, load, memory and disk, read off the machine itself |
+
+<a id="mandelbrot"></a>
 `mandelbrot.lux` draws the Mandelbrot set in text. Four constants near the top
 are the window on the number plane; shrink it around a point and run again to
 zoom. Nothing to type, nothing to install.
 
+<a id="rps"></a>
 `rps.lux` plays rock, paper, scissors, and it has no dice. For every pair of
 moves you have just played it keeps a tally of what you played next, so each
 turn it looks up the pair you are sitting on and counters whatever usually
@@ -15,12 +64,14 @@ stings. Play it as a habit and it takes about six rounds to lock on; play it as
 real chance and the best it can do is break even, because a table of counts has
 nothing to work with.
 
+<a id="random"></a>
 `random.lux` builds the thing lux deliberately does not have — a random number
 generator — out of multiplication and a remainder, and seeds it from the system
 clock by asking `date` for the nanosecond through `run`. It rolls a die sixty
 thousand times and prints the histogram, then shuffles a hand of cards. Copy the
 three functions at the top into anything that needs to roll something.
 
+<a id="hangman"></a>
 `hangman.lux` and `maze.lux` are what the generator is for. Hangman picks its
 word from a list; the maze digs itself with a depth-first walk that only ever
 breaks into a cell it has never stood in, which is why exactly one path connects
@@ -46,6 +97,7 @@ confirmed to have 179 passages and reach all 180 cells, every opening set from
 both sides, every path walked back against the wall data a step at a time, and
 the two paths that must be identical compared cell for cell.
 
+<a id="poker"></a>
 `poker.lux` is the big one: heads-up Texas Hold'em against a bot, with a tutor
 that talks you through every decision. Before each of your turns it deals the
 rest of the hand out a thousand times or more, every unknown card falling every
@@ -107,6 +159,7 @@ program does it in eighty milliseconds, which is roughly eleven times faster and
 is what a compiled language buys you the moment a program starts simulating
 rather than printing.
 
+<a id="todo"></a>
 `todo.lux` is the only app here rather than a program: it keeps a file, so it
 survives being closed. `lux run todo.lux` shows the list, `add walk the dog`
 puts something on it, `done 2` ticks it off, `drop 2` removes it, and `clear`
@@ -123,6 +176,7 @@ reports a failed save rather than read from the top of the file, because a
 function cannot see a file-level `let` — except on Swift, where it can, which is
 [lux#76](https://github.com/anderix/lux/issues/76).
 
+<a id="blackjack"></a>
 `blackjack.lux` is poker's counterpart and deliberately the opposite technique.
 Poker simulates because the space of ways a hand can finish is far too large to
 walk through; blackjack is small enough to walk through, so this one works the
@@ -153,6 +207,7 @@ more than a third of the time, tens are just under a third of a fresh shoe, and
 the program tells you when that has stopped being true. It is the one decision
 in blackjack that counting can turn around.
 
+<a id="connect"></a>
 `connect.lux` is Connect Four against minimax with alpha-beta pruning. The bot
 has no openings and no rules about good moves; it plays the position out to a
 fixed depth, scores what it finds, and walks the answers back up assuming you
@@ -181,6 +236,7 @@ It is also the one program here where compiling changes what the program feels
 like rather than just how fast it finishes: the hard bot takes about a second a
 move interpreted and four milliseconds built.
 
+<a id="nim"></a>
 `nim.lux` is the opposite of connect four: a game where searching is a waste of
 time, because the answer is a formula. Rows of matches, take as many as you like
 from one row, whoever takes the last one wins. The bot has no lookahead and no
@@ -206,6 +262,7 @@ against what the program believes, which agreed on every one under both rules,
 and the two strategies picked different moves in 192 positions — every one of
 them in the endgame.
 
+<a id="guess"></a>
 `guess.lux` is the guessing game backwards. You think of the number and the
 program finds it — out of a hundred in seven questions, out of a million in
 twenty — and it does not matter which number you picked, because the program
@@ -226,6 +283,7 @@ number in seven different ranges through the actual search found it, and the
 bound is now tight: the worst case observed equals the number claimed in all of
 them.
 
+<a id="flash"></a>
 `flash.lux` is the second app here, and the useful one. Flashcards in five
 boxes: a card you get right moves up a box, a card you miss drops straight back
 to the first however high it had climbed, and the box decides how long the card
@@ -251,6 +309,7 @@ struct with a field of that name produces Rust that will not compile; that is
 [lux#77](https://github.com/anderix/lux/issues/77), which was filed the same
 afternoon over a field named `move`.
 
+<a id="sudoku"></a>
 `sudoku.lux` makes a puzzle and then solves it twice, because the search is the
 dull part. Backtracking will finish any sudoku in about thirty lines and there
 is nothing clever in it; what matters is which empty square you try next. So the
@@ -274,6 +333,7 @@ checked end to end with no failures: every grid legal, every answer consistent
 with its clues, every puzzle with exactly one answer, and the two solvers always
 agreeing.
 
+<a id="battleship"></a>
 `battleship.lux` is ten by ten with five ships, and it holds three shooters
 because the good one is only interesting beside the others. One fires at squares
 it has not tried and remembers nothing, taking 95.3 shots to sink a fleet. One
@@ -304,6 +364,7 @@ out to write. The density map was checked against a second count written from
 the rules rather than the code, over six hundred positions from real games, and
 the two agreed everywhere.
 
+<a id="minesweeper"></a>
 `minesweeper.lux` is nine by nine and ten mines, and its solver is built around
 the distinction the game turns on: not having worked a position out is not the
 same as there being nothing to work out. It reasons three ways. One number at a
@@ -337,6 +398,7 @@ decidable after all: the search was stopping early whenever the frontier was
 empty, and so never reached the rule that settles the leftover squares by
 counting mines. Fixed, the other three hundred and ninety-eight agreed.
 
+<a id="mastermind"></a>
 `mastermind.lux` is guess.lux with the halving taken away. A code has no order,
 nothing to be higher or lower than, and no middle to aim at — but the scoring
 rule cuts anyway, because an answer is only consistent with some of the 1296
@@ -358,6 +420,7 @@ guess in the worst case: 1,252 solved within five, the other 44 in six, averagin
 brings the worst case down to five and that five is the floor. So the price of
 only ever saying things that might be true is those 44 codes.
 
+<a id="wordle"></a>
 `wordle.lux` is five letters and six guesses, and the interesting part is not
 the game but the marking. The rule everybody writes first — mark a letter yellow
 if the answer contains it — is not the rule, and it comes apart the moment a
@@ -400,6 +463,7 @@ yellow squares are close to unreadable for a fair number of people, so position
 carries it instead — a letter in brackets is in the right place, a letter in
 parentheses is in the word somewhere else, and a bare letter is not in it.
 
+<a id="cipher"></a>
 `cipher.lux` shifts letters along the alphabet, enciphers with a keyword, and
 breaks the first of those without being given the key. Twenty-five keys means
 trying all of them breaks a shift cipher, but the program does not need you to
@@ -429,6 +493,7 @@ Thirty-odd passes to learn what one subscript would have told you — not
 efficient, but worth seeing, because a thing you were not given can often be
 rebuilt out of the things you were.
 
+<a id="weekday"></a>
 `weekday.lux` is the one that does not search at all. Give it a date and it works
 out the day of the week by arithmetic, twice over, by two methods with nothing in
 common — Zeller's congruence from 1882, which moves the start of the year to
@@ -446,6 +511,7 @@ same counts come out starting from 1600, 2000 or 2400, which is the cycle provin
 itself. It is uneven because 4,800 does not divide by seven, so something has to
 be left over, and it turns out to be Friday.
 
+<a id="dashboard"></a>
 `dashboard.lux` is the one that looks outward. Everything else here makes its
 own data; this reads the machine — uptime, load against the core count, memory,
 and disk — through the two doors a program has onto the world, `readFile` for
@@ -455,6 +521,7 @@ says so and the rest of the report still prints. The /proc reads are Linux; run
 it anywhere else and what you get is the program explaining itself line by line,
 which is the failure working rather than a bug.
 
+<a id="rule30"></a>
 `rule30.lux` is the smallest program here and the one with the most going on.
 A row of cells, each on or off; to work out a cell's next state you look at it
 and its two neighbours, and a rule is nothing but an answer for each of the
@@ -464,6 +531,7 @@ and, down its right, something nobody has found a shortcut for. Change one
 constant: 90 draws Sierpinski's triangle, 110 can compute anything a computer
 can, 184 models traffic jams.
 
+<a id="life"></a>
 `life.lux` is Conway's Game of Life, and it does not only draw. Four rules, none
 of which mentions a shape: a living cell with two or three living neighbours
 lives on, one with fewer or more dies, and a dead cell with exactly three comes
@@ -503,6 +571,7 @@ take about fourteen seconds under `lux run` and four thousandths of a second
 built. The acorn needs 5,206 generations on a grid of 340 by 260, which is
 seventeen seconds built and was never attempted the other way.
 
+<a id="morse"></a>
 `morse.lux` goes both ways — `lux run morse.lux hello world`, or `-d` and a
 string of dots and dashes to come back. It is built the way lux forces rather
 than the way the textbook prints: with no way to take a single character out of
@@ -512,6 +581,7 @@ Decoding needs no characters at all, since Morse arrives pre-cut by its own
 spaces and `split` takes it apart along them. Run it with no arguments and it
 sends a sentence one way and brings it back the other.
 
+<a id="drill"></a>
 `drill.lux` is times tables, timed. `lux run drill.lux 7` for the sevens, a
 second number for how many questions, and at the end it reports how long each
 answer took and which facts are worth another look. The clock is `date`, asked
@@ -519,6 +589,7 @@ before and after each question, which costs a few thousandths of a second per
 reading — irrelevant when what is being measured is a child thinking, and fatal
 if it were code.
 
+<a id="runes"></a>
 `runes.lux` writes English in Tolkien's runes and reads it back. Not
 translation — transliteration, one mark at a time, which is exactly what the
 runes on Thror's map are: ordinary English that Bilbo's readers decode from the
