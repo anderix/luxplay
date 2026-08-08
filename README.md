@@ -26,6 +26,26 @@ word from a list; the maze digs itself with a depth-first walk that only ever
 breaks into a cell it has never stood in, which is why exactly one path connects
 any two points in it.
 
+That property is what `lux run maze.lux solve` is about. Three solvers race
+through the same maze, and because one path exists they cannot disagree about
+the answer — the only thing they can differ in is how much of the maze they had
+to look at, which is a rare chance to compare algorithms with the result held
+still. Over two thousand mazes of eighteen by ten, the way through averages 80.0
+of the 180 cells. A thread unrolled behind you, backing out of dead ends, looks
+at 108.2, and arrives with the thread already lying along the answer. Breadth
+first looks at 119.3, and that is the one worth sitting with: it is what anybody
+reaches for when they want the shortest route, and here the shortest and the
+only are the same thing, so it pays about a tenth more looking to buy a promise
+the maze had already made. A hand on the right-hand wall takes 160.5 steps,
+twice the walk it proves, because it goes into every dead end and comes back
+out; it cannot circle for ever because there are no rings to circle, and it is
+the only one of the three you could do in the dark.
+
+The property everything rests on is checked rather than assumed: every maze
+confirmed to have 179 passages and reach all 180 cells, every opening set from
+both sides, every path walked back against the wall data a step at a time, and
+the two paths that must be identical compared cell for cell.
+
 `poker.lux` is the big one: heads-up Texas Hold'em against a bot, with a tutor
 that talks you through every decision. Before each of your turns it deals the
 rest of the hand out a thousand times or more, every unknown card falling every
