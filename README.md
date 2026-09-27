@@ -662,5 +662,4 @@ lux run flash.lux add der Hund = the dog
 language, and `lux build <file>` compiles a native binary. Every program here
 converts on all three and compiles warning-clean.
 
-Written by David M. Anderson.
 MIT licensed.
