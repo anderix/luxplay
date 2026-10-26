@@ -177,8 +177,7 @@ you one, and `contains` would answer yes to "book x ray appointment". Splitting
 the line at every `x ` answers it exactly: only a line that begins with the mark
 has an empty first piece. And the filename is passed into the function that
 reports a failed save rather than read from the top of the file, because a
-function cannot see a file-level `let` — except on Swift, where it can, which is
-[lux#76](https://github.com/anderix/lux/issues/76).
+function cannot see a file-level `let`.
 
 <a id="blackjack"></a>
 `blackjack.lux` is poker's counterpart and deliberately the opposite technique.
@@ -304,14 +303,10 @@ cards. `lux run flash.lux` asks what is due, `all` goes through everything,
 and it writes you ten German words rather than printing instructions about a
 file format.
 
-Two things in it are lux showing through. There is no `trim`, and `replace`
+One thing in it is lux showing through. There is no `trim`, and `replace`
 cannot fake one — it would take the spaces out of the middle of a phrase as
 happily as off the ends — so tidying a line means splitting it on the space and
-putting back only the pieces that hold something. And the field holding a card's
-box number is called `boxNumber`, because `box` is reserved in Rust and a lux
-struct with a field of that name produces Rust that will not compile; that is
-[lux#77](https://github.com/anderix/lux/issues/77), which was filed the same
-afternoon over a field named `move`.
+putting back only the pieces that hold something.
 
 <a id="sudoku"></a>
 `sudoku.lux` makes a puzzle and then solves it twice, because the search is the
